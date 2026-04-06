@@ -1,37 +1,30 @@
-# Stage 1: Builder
-# Install system dependencies for WeasyPrint and Python packages
+# syntax=docker/dockerfile:1
+
+# Stage 1: install Python deps + build tools (WeasyPrint needs Pango/Cairo)
 FROM python:3.11-slim AS builder
 
-# Install WeasyPrint system dependencies (Pango, Cairo, GDK-PixBuf, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Cairo and Pango are required by WeasyPrint for PDF rendering
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
-    # Font and image support
     fonts-liberation \
     libxml2 \
     libxslt1.1 \
-    # Build tools needed for compiling some Python packages
     gcc \
     g++ \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a virtual environment to isolate dependencies
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Upgrade pip and install build backend
-RUN pip install --upgrade pip hatchling
-
-# Copy dependency manifest and install all Python dependencies
-WORKDIR /build
+# Copy only the manifest first so pip layer is cached unless deps change
 COPY pyproject.toml ./
-# Install the project dependencies (not the project itself yet)
-RUN pip install \
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install \
     "fastapi>=0.111.0" \
     "uvicorn[standard]>=0.29.0" \
     "sqlalchemy[asyncio]>=2.0.0" \
@@ -49,11 +42,10 @@ RUN pip install \
     "alembic>=1.13.0" \
     "email-validator>=2.1.0"
 
-
-# Stage 2: Runtime image
+# Stage 2: lean runtime (no build tools, no gcc)
 FROM python:3.11-slim AS runtime
 
-# Install only runtime system libraries (no build tools)
+# Only runtime libraries - no gcc/g++
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libpango-1.0-0 \
@@ -62,23 +54,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     libxml2 \
     libxslt1.1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the virtual environment from the builder stage
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Create a non-root user for security
 RUN useradd --create-home --shell /bin/bash verity
 USER verity
 WORKDIR /app
 
-# Copy application source code
 COPY --chown=verity:verity app/ ./app/
 COPY --chown=verity:verity cli.py ./
+COPY --chown=verity:verity migrations/ ./migrations/
+COPY --chown=verity:verity alembic.ini ./
 
-# Expose the API port
 EXPOSE 8000
 
-# Run the Uvicorn ASGI server
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations then start the server
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"]
