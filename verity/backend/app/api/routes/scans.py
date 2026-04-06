@@ -18,6 +18,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -358,6 +359,90 @@ async def get_scan(
         summary=scan.summary,
         components=component_outs,
         validation_issues=validation_issue_outs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
+
+@router.get("/{scan_id}/export/json")
+async def export_scan_json(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user),
+) -> Response:
+    """Export a scan result as a JSON file download."""
+    scan_detail = await _fetch_scan_detail(scan_id, db, current_user)
+    from app.exporters.json_exp import export_json
+    content = export_json(scan_detail.model_dump())
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="verity-{scan_id}.json"'},
+    )
+
+
+@router.get("/{scan_id}/export/pdf")
+async def export_scan_pdf(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user),
+) -> Response:
+    """Export a scan result as a branded PDF report."""
+    scan_detail = await _fetch_scan_detail(scan_id, db, current_user)
+    from app.exporters.pdf import export_pdf
+    content = export_pdf(scan_detail.model_dump())
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="verity-{scan_id}.pdf"'},
+    )
+
+
+async def _fetch_scan_detail(
+    scan_id: str,
+    db: AsyncSession,
+    current_user: Optional[User],
+) -> ScanDetailOut:
+    """Shared helper: fetch a scan + components and return ScanDetailOut."""
+    result = await db.execute(
+        select(Scan).where(Scan.id == scan_id)
+    )
+    scan = result.scalar_one_or_none()
+    if scan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Scan '{scan_id}' not found")
+
+    if settings.AUTH_ENABLED and current_user is not None:
+        if scan.user_id and scan.user_id != current_user.id and not current_user.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    comp_result = await db.execute(
+        select(ScanComponent).where(ScanComponent.scan_id == scan_id)
+    )
+    db_components = comp_result.scalars().all()
+    component_outs = _build_component_outs_from_db(db_components)
+    summary = scan.summary or {}
+    validation_issues = [
+        ValidationIssueOut(**issue) for issue in summary.get("validation_issues", [])
+        if isinstance(issue, dict)
+    ]
+    return ScanDetailOut(
+        id=scan.id,
+        filename=scan.filename,
+        sbom_format=scan.sbom_format,
+        format_version=scan.format_version,
+        created_at=scan.created_at,
+        risk_level=scan.risk_level,
+        risk_score=scan.risk_score,
+        total_components=scan.total_components,
+        vulnerable_components=scan.vulnerable_components,
+        invalid_components=scan.invalid_components,
+        ntia_compliant=scan.ntia_compliant,
+        vuln_check_enabled=scan.vuln_check_enabled,
+        summary=summary,
+        components=component_outs,
+        validation_issues=validation_issues,
     )
 
 
