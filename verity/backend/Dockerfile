@@ -19,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy only the manifest first so pip layer is cached unless deps change
 COPY pyproject.toml ./
 
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -42,10 +41,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     "alembic>=1.13.0" \
     "email-validator>=2.1.0"
 
+
 # Stage 2: lean runtime (no build tools, no gcc)
 FROM python:3.11-slim AS runtime
 
-# Only runtime libraries - no gcc/g++
+# gosu lets the entrypoint drop from root to the verity user after fixing
+# volume permissions. curl is used by the Docker healthcheck.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libpango-1.0-0 \
@@ -55,26 +56,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2 \
     libxslt1.1 \
     curl \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Create the app user and the data directory (for SQLite volume mount) before
-# switching to non-root, so the volume is writable by the verity user.
+# Create non-root user and app directories as root before the volume is mounted.
+# The entrypoint will chown /app/data after Docker mounts the volume over it.
 RUN useradd --create-home --shell /bin/bash verity && \
     mkdir -p /app/data && \
-    chown -R verity:verity /app
+    chown verity:verity /app
 
-USER verity
 WORKDIR /app
 
-COPY --chown=verity:verity app/ ./app/
-COPY --chown=verity:verity cli.py ./
-COPY --chown=verity:verity migrations/ ./migrations/
-COPY --chown=verity:verity alembic.ini ./
+COPY app/ ./app/
+COPY cli.py ./
+COPY migrations/ ./migrations/
+COPY alembic.ini ./
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
 
-# Run migrations then start the server
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"]
