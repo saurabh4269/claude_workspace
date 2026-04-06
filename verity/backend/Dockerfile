@@ -60,7 +60,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN useradd --create-home --shell /bin/bash verity
+# Create the app user and the data directory (for SQLite volume mount) before
+# switching to non-root, so the volume is writable by the verity user.
+RUN useradd --create-home --shell /bin/bash verity && \
+    mkdir -p /app/data && \
+    chown -R verity:verity /app
+
 USER verity
 WORKDIR /app
 

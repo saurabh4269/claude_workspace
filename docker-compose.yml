@@ -30,10 +30,10 @@ services:
       CORS_ORIGINS: '["http://localhost", "http://localhost:80", "http://localhost:3000"]'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 45s
 
   frontend:
     build:
