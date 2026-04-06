@@ -1,0 +1,52 @@
+services:
+  backend:
+    build:
+      context: ./verity/backend
+      dockerfile: Dockerfile
+    container_name: verity-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - verity-db:/app/data
+    environment:
+      # Database
+      DATABASE_URL: sqlite+aiosqlite:////app/data/verity.db
+
+      # Security - change SECRET_KEY before deploying to production
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+
+      # Auth (disabled by default)
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+
+      # History (enabled by default)
+      HISTORY_ENABLED: ${HISTORY_ENABLED:-true}
+
+      # Vulnerability checking
+      VULN_CHECK_ENABLED: ${VULN_CHECK_ENABLED:-true}
+      NVD_API_KEY: ${NVD_API_KEY:-}
+
+      # CORS
+      CORS_ORIGINS: '["http://localhost", "http://localhost:80", "http://localhost:3000"]'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./verity/frontend
+      dockerfile: Dockerfile
+    container_name: verity-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  verity-db:
+    driver: local
