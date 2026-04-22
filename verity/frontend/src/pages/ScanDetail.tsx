@@ -2,25 +2,11 @@ import React from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import * as Tabs from '@radix-ui/react-tabs'
-import {
-  Download,
-  FileJson,
-  FileText,
-  CheckCircle,
-  XCircle,
-  ChevronLeft,
-  Package,
-  ShieldAlert,
-  BarChart3,
-  Star,
-} from 'lucide-react'
+import { Download, ChevronLeft } from 'lucide-react'
 import { scans } from '@/lib/api'
 import { RiskBadge } from '@/components/RiskBadge'
 import { ComponentTable } from '@/components/ComponentTable'
 import { CompliancePanel } from '@/components/CompliancePanel'
-import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
@@ -35,14 +21,6 @@ function triggerDownload(blob: Blob, filename: string) {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
-}
-
-function IssueSeverityBadge({ severity }: { severity: string }) {
-  const s = severity?.toLowerCase()
-  if (s === 'error') return <Badge variant="error">Error</Badge>
-  if (s === 'warning') return <Badge variant="warning">Warning</Badge>
-  if (s === 'info') return <Badge variant="info">Info</Badge>
-  return <Badge variant="default">{severity}</Badge>
 }
 
 function gradeColor(grade: string): string {
@@ -61,149 +39,136 @@ function scoreBarColor(score: number): string {
   return 'bg-[#dc2626]'
 }
 
-/** Icon metric card for the summary strip */
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  iconBg = 'bg-[#edfaf3]',
-  iconColor = 'text-[#1c9770]',
-}: {
-  icon: React.ElementType
-  label: string
-  value: React.ReactNode
-  iconBg?: string
-  iconColor?: string
-}) {
+function IssueSeverityText({ severity }: { severity: string }) {
+  const s = severity?.toLowerCase()
+  if (s === 'error') return <span className="text-[15px] font-display font-bold text-[#dc2626]">Error</span>
+  if (s === 'warning') return <span className="text-[15px] font-display font-bold text-[#f59e0b]">Warning</span>
+  if (s === 'info') return <span className="text-[15px] font-display font-bold text-[#1c9770]">Info</span>
+  return <span className="text-[15px] font-display font-bold text-gray-400">{severity}</span>
+}
+
+function QualityBreakdown({ quality }: { quality: QualityScore }) {
+  const { grade, overallScore, categories } = quality
   return (
-    <div className="flex items-center gap-3 px-5 py-4">
-      <div className={cn('flex h-9 w-9 items-center justify-center rounded-lg shrink-0', iconBg)}>
-        <Icon size={17} className={iconColor} />
+    <div className="mb-10">
+      <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-6">
+        Quality Score
+      </p>
+      <div className="flex items-end gap-4 mb-8">
+        <span className={cn('text-6xl font-display font-bold leading-none', gradeColor(grade))}>
+          {grade}
+        </span>
+        <div className="pb-1">
+          <span className="text-2xl font-display font-bold text-[#464646]">{overallScore.toFixed(1)}</span>
+          <span className="text-base text-gray-400 font-sans"> / 10</span>
+        </div>
       </div>
-      <div className="min-w-0">
-        <div className="text-xl font-display font-bold text-[#464646] leading-tight">{value}</div>
-        <p className="text-xs text-gray-400 font-sans mt-0.5">{label}</p>
+      <div>
+        {categories.map((cat) => {
+          const pct = Math.min((cat.score / 10) * 100, 100)
+          return (
+            <div key={cat.name} className="py-3 border-b border-gray-100 last:border-b-0">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[15px] font-sans text-[#464646]">{cat.name}</span>
+                <span className="text-[15px] font-display font-bold text-[#464646]">{cat.score.toFixed(1)}</span>
+              </div>
+              <div className="h-1 bg-gray-100 rounded-full">
+                <div
+                  className={cn('h-1 rounded-full', scoreBarColor(cat.score))}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
 }
 
-/** All quality categories as horizontal bars */
-function QualityBreakdown({ quality }: { quality: QualityScore }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-3">
-          <span className={cn('text-4xl font-display font-bold leading-none', gradeColor(quality.grade))}>
-            {quality.grade}
-          </span>
-          <div>
-            <span className="text-lg font-display font-bold text-[#464646]">
-              {quality.overallScore.toFixed(1)}
-              <span className="text-sm font-sans text-gray-400"> / 10</span>
-            </span>
-            <p className="text-xs text-gray-400 font-sans">Quality Score</p>
-          </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {quality.categories.map((cat) => {
-            const pct = Math.min((cat.score / 10) * 100, 100)
-            return (
-              <div key={cat.name}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-sans text-gray-600">{cat.name}</span>
-                  <span className="text-xs font-mono text-gray-400">{cat.score.toFixed(1)}</span>
-                </div>
-                <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className={cn('h-full rounded-full transition-all', scoreBarColor(cat.score))}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-/** NTIA compliance as a checklist */
-function NTIAChecklist({ ntiaCompliant, ntia, invalidComponents }: {
+function NTIAChecklist({
+  ntiaCompliant,
+  ntia,
+  invalidComponents,
+}: {
   ntiaCompliant: boolean
   ntia?: NTIAResult
   invalidComponents: number
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          {ntiaCompliant
-            ? <CheckCircle size={16} className="text-[#93cb52]" />
-            : <XCircle size={16} className="text-[#dc2626]" />}
+    <div className="mt-10">
+      <div className="flex items-center justify-between mb-6">
+        <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
           NTIA Minimum Elements
-          <span className={cn(
-            'ml-auto text-xs font-semibold px-2 py-0.5 rounded-full',
-            ntiaCompliant ? 'bg-green-50 text-[#1c9770]' : 'bg-[#f2eeee] text-[#dc2626]'
-          )}>
-            {ntiaCompliant ? 'Compliant' : 'Non-compliant'}
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {ntia?.elements ? (
-          <div className="space-y-2">
-            {ntia.elements.map((el) => (
-              <div key={el.elementName} className="flex items-start gap-2">
-                {el.compliant
-                  ? <CheckCircle size={14} className="text-[#93cb52] mt-0.5 shrink-0" />
-                  : <XCircle size={14} className="text-[#dc2626] mt-0.5 shrink-0" />}
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-[#464646]">{el.elementName}</p>
-                  {el.detail && (
-                    <p className="text-xs text-gray-400 mt-0.5">{el.detail}</p>
-                  )}
-                </div>
+        </p>
+        <span
+          className={cn(
+            'text-sm font-display font-bold',
+            ntiaCompliant ? 'text-[#93cb52]' : 'text-[#dc2626]',
+          )}
+        >
+          {ntiaCompliant ? 'Compliant' : 'Non-compliant'}
+        </span>
+      </div>
+
+      {ntia?.elements ? (
+        <div>
+          {ntia.elements.map((el) => (
+            <div
+              key={el.elementName}
+              className="flex items-start gap-4 py-3 border-b border-gray-100 last:border-b-0"
+            >
+              <span
+                className={cn(
+                  'text-sm font-bold mt-0.5 shrink-0',
+                  el.compliant ? 'text-[#93cb52]' : 'text-[#dc2626]',
+                )}
+              >
+                {el.compliant ? '✓' : '✗'}
+              </span>
+              <div className="flex-1 flex items-center justify-between gap-4">
+                <span className="text-[15px] font-sans text-[#464646]">{el.elementName}</span>
+                {el.detail && (
+                  <span className="text-sm font-sans text-gray-400 text-right max-w-xs shrink-0">
+                    {el.detail}
+                  </span>
+                )}
               </div>
-            ))}
-          </div>
-        ) : ntiaCompliant ? (
-          <p className="text-sm font-sans text-[#464646]">
-            All NTIA minimum elements are present.
-          </p>
-        ) : (
-          <div className="space-y-2 text-sm font-sans text-[#464646]">
-            <p>Missing required fields. Check the Validation Issues tab for details.</p>
-            {invalidComponents > 0 && (
-              <p className="text-xs text-[#dc2626]">
-                {invalidComponents} component{invalidComponents !== 1 ? 's' : ''} missing required fields.
-              </p>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+            </div>
+          ))}
+        </div>
+      ) : ntiaCompliant ? (
+        <p className="text-[15px] font-sans text-[#464646]">
+          All NTIA minimum elements are present.
+        </p>
+      ) : (
+        <div className="text-[15px] font-sans text-[#464646] space-y-2">
+          <p>Missing required fields. Check the Validation Issues tab for details.</p>
+          {invalidComponents > 0 && (
+            <p className="text-sm text-[#dc2626]">
+              {invalidComponents} component{invalidComponents !== 1 ? 's' : ''} missing required fields.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
-/** Top risky components list */
-function TopComponentsList({ components }: { components: ReturnType<typeof Array.prototype.slice> }) {
+function TopComponentsList({ components }: { components: any[] }) {
   if (components.length === 0) {
-    return <p className="text-sm text-gray-400 font-sans">No components found.</p>
+    return <p className="text-[15px] text-gray-400 font-sans">No components found.</p>
   }
   return (
-    <div className="divide-y divide-[#e5e7eb]">
+    <div>
       {components.map((comp: any) => (
-        <div key={comp.id} className="flex items-center gap-3 py-3">
+        <div key={comp.id} className="flex items-center gap-4 py-3 border-b border-gray-100 last:border-b-0">
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-sans font-medium text-[#464646] truncate">{comp.name}</p>
-            <p className="text-xs text-gray-400 font-sans font-mono">{comp.version || 'no version'}</p>
+            <p className="text-[15px] font-sans font-medium text-[#464646] truncate">{comp.name}</p>
           </div>
+          <span className="text-sm font-mono text-gray-400 shrink-0">{comp.version || 'no version'}</span>
           <RiskBadge level={comp.riskLevel} />
-          <span className="text-sm font-mono text-gray-400 w-10 text-right shrink-0">
+          <span className="text-sm font-mono text-gray-400 w-8 text-right shrink-0">
             {comp.riskScore.toFixed(0)}
           </span>
         </div>
@@ -212,11 +177,8 @@ function TopComponentsList({ components }: { components: ReturnType<typeof Array
   )
 }
 
-const TAB_TRIGGER_CLASS = cn(
-  'px-4 py-2.5 text-sm font-display font-bold text-gray-400 border-b-2 border-transparent transition-colors whitespace-nowrap',
-  'data-[state=active]:text-[#1c9770] data-[state=active]:border-[#1c9770]',
-  'hover:text-[#464646]',
-)
+const TAB_TRIGGER_CLASS =
+  'px-0 mr-8 py-3 text-[15px] font-display font-bold border-b-2 border-transparent transition-colors whitespace-nowrap data-[state=active]:border-[#1c9770] data-[state=active]:text-[#1c9770] text-gray-400 hover:text-[#464646]'
 
 export default function ScanDetail() {
   const { id } = useParams<{ id: string }>()
@@ -260,22 +222,26 @@ export default function ScanDetail() {
 
   if (isLoading) {
     return (
-      <div className="p-8 space-y-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 w-64 bg-gray-100 rounded" />
-          <div className="h-4 w-40 bg-gray-100 rounded" />
-          <div className="grid grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => <div key={i} className="h-20 bg-gray-100 rounded-lg" />)}
-          </div>
-          <div className="h-64 bg-gray-100 rounded-lg" />
+      <div className="p-10 space-y-6 animate-pulse">
+        <div className="h-4 w-24 bg-gray-100 rounded" />
+        <div className="h-8 w-64 bg-gray-100 rounded" />
+        <div className="h-4 w-48 bg-gray-100 rounded" />
+        <div className="grid grid-cols-4 gap-0 border-y border-gray-100 my-6">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="px-0 py-6 text-center">
+              <div className="h-8 w-16 bg-gray-100 rounded mx-auto mb-2" />
+              <div className="h-3 w-24 bg-gray-100 rounded mx-auto" />
+            </div>
+          ))}
         </div>
+        <div className="h-64 bg-gray-100 rounded" />
       </div>
     )
   }
 
   if (isError || !data) {
     return (
-      <div className="p-8">
+      <div className="p-10">
         <Link
           to="/history"
           className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-[#464646] font-sans mb-6"
@@ -283,7 +249,7 @@ export default function ScanDetail() {
           <ChevronLeft size={14} />
           Back to History
         </Link>
-        <div className="rounded-xl bg-[#f2eeee] px-6 py-5 text-[#dc2626] font-sans text-sm">
+        <div className="bg-[#f2eeee] px-6 py-5 rounded-lg text-[#dc2626] font-sans text-[15px]">
           Failed to load scan details. The scan may have been deleted or does not exist.
         </div>
       </div>
@@ -298,93 +264,110 @@ export default function ScanDetail() {
   const issueCount = data.validationIssues?.length ?? 0
 
   return (
-    <div className="p-8 pb-24 space-y-5">
-      {/* Back + header row */}
-      <div className="flex items-start justify-between gap-4">
+    <div className="p-10 pb-24">
+      {/* Back link */}
+      <Link
+        to="/history"
+        className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-[#464646] font-sans transition-colors mb-4"
+      >
+        <ChevronLeft size={14} />
+        Back to History
+      </Link>
+
+      {/* Header row */}
+      <div className="flex items-start justify-between gap-6">
         <div className="min-w-0">
-          <Link
-            to="/history"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-[#464646] font-sans transition-colors mb-2"
-          >
-            <ChevronLeft size={14} />
-            Back to History
-          </Link>
           <h1 className="font-display font-bold text-2xl text-[#464646] truncate leading-tight">
             {data.filename}
           </h1>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <Badge variant="info">{data.sbomFormat}</Badge>
+          <div className="flex items-center gap-3 mt-2 flex-wrap">
+            <span className="text-sm font-sans text-gray-400">{data.sbomFormat}</span>
             {data.formatVersion && (
-              <span className="text-xs text-gray-400 font-sans">{data.formatVersion}</span>
+              <span className="text-sm font-sans text-gray-400">{data.formatVersion}</span>
             )}
-            <span className="text-xs text-gray-400 font-sans">{formatDate(data.createdAt)}</span>
+            <span className="text-sm font-sans text-gray-400">{formatDate(data.createdAt)}</span>
           </div>
         </div>
 
-        {/* Export buttons — integrated in header */}
-        <div className="flex items-center gap-2 shrink-0 pt-7">
+        {/* Export text links */}
+        <div className="flex items-center gap-5 shrink-0 pt-1">
           {exportError && (
-            <span className="text-xs text-[#dc2626] font-sans">{exportError}</span>
+            <span className="text-sm text-[#dc2626] font-sans">{exportError}</span>
           )}
-          <Button variant="outline" size="sm" onClick={handleExportJson} disabled={exportingJson}>
-            {exportingJson ? <Spinner size={13} /> : <FileJson size={13} />}
-            JSON
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportPdf} disabled={exportingPdf}>
-            {exportingPdf ? <Spinner size={13} /> : <FileText size={13} />}
-            PDF
-          </Button>
+          <button
+            type="button"
+            onClick={handleExportJson}
+            disabled={exportingJson}
+            className="flex items-center gap-1.5 text-sm font-sans text-gray-400 hover:text-[#464646] transition-colors disabled:opacity-50"
+          >
+            {exportingJson ? <Spinner size={13} /> : null}
+            Export JSON
+          </button>
+          <button
+            type="button"
+            onClick={handleExportPdf}
+            disabled={exportingPdf}
+            className="flex items-center gap-1.5 text-sm font-sans text-gray-400 hover:text-[#464646] transition-colors disabled:opacity-50"
+          >
+            {exportingPdf ? <Spinner size={13} /> : null}
+            Export PDF
+          </button>
         </div>
       </div>
 
-      {/* Metric strip */}
-      <Card>
-        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-[#e5e7eb]">
-          <MetricCard
-            icon={Package}
-            label="Total Components"
-            value={data.totalComponents}
-          />
-          <MetricCard
-            icon={ShieldAlert}
-            label="Vulnerable"
-            value={
-              <span className={data.vulnerableComponents > 0 ? 'text-[#dc2626]' : ''}>
-                {data.vulnerableComponents}
-              </span>
-            }
-            iconBg={data.vulnerableComponents > 0 ? 'bg-[#f2eeee]' : 'bg-gray-50'}
-            iconColor={data.vulnerableComponents > 0 ? 'text-[#dc2626]' : 'text-gray-400'}
-          />
-          <MetricCard
-            icon={BarChart3}
-            label="Risk Level"
-            value={<RiskBadge level={data.riskLevel} />}
-          />
-          <MetricCard
-            icon={Star}
-            label="Quality"
-            value={
-              data.qualityScore != null ? (
-                <span className="flex items-center gap-1.5">
-                  <span className={data.qualityGrade ? gradeColor(data.qualityGrade) : ''}>
-                    {data.qualityGrade ?? '—'}
-                  </span>
-                  <span className="text-base text-gray-400 font-sans font-normal">
-                    {data.qualityScore.toFixed(1)}/10
-                  </span>
-                </span>
-              ) : (
-                <span className="text-gray-300">—</span>
-              )
-            }
-          />
+      {/* Stats strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 border-y border-gray-100 my-8">
+        {/* Total Components */}
+        <div className="py-6 pr-8">
+          <p className="text-3xl font-display font-bold text-[#464646]">{data.totalComponents}</p>
+          <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mt-1">
+            Total Components
+          </p>
         </div>
-      </Card>
+
+        {/* Vulnerable */}
+        <div className="py-6 pr-8 pl-8 border-l border-gray-100">
+          <p className={cn('text-3xl font-display font-bold', data.vulnerableComponents > 0 ? 'text-[#dc2626]' : 'text-[#464646]')}>
+            {data.vulnerableComponents}
+          </p>
+          <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mt-1">
+            Vulnerable
+          </p>
+        </div>
+
+        {/* Quality */}
+        <div className="py-6 pr-8 pl-8 border-l border-gray-100">
+          {data.qualityScore != null ? (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className={cn('text-3xl font-display font-bold', data.qualityGrade ? gradeColor(data.qualityGrade) : 'text-[#464646]')}>
+                  {data.qualityGrade ?? '—'}
+                </span>
+                <span className="text-base text-gray-400 font-sans">
+                  {data.qualityScore.toFixed(1)}/10
+                </span>
+              </div>
+            </>
+          ) : (
+            <p className="text-3xl font-display font-bold text-gray-300">—</p>
+          )}
+          <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mt-1">
+            Quality
+          </p>
+        </div>
+
+        {/* Risk */}
+        <div className="py-6 pl-8 border-l border-gray-100">
+          <RiskBadge level={data.riskLevel} className="text-3xl" />
+          <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mt-1">
+            Risk Level
+          </p>
+        </div>
+      </div>
 
       {/* Tabs */}
       <Tabs.Root defaultValue="overview">
-        <Tabs.List className="flex border-b border-[#e5e7eb] gap-0 overflow-x-auto">
+        <Tabs.List className="flex border-b border-gray-100 overflow-x-auto">
           <Tabs.Trigger value="overview" className={TAB_TRIGGER_CLASS}>
             Overview
           </Tabs.Trigger>
@@ -405,76 +388,84 @@ export default function ScanDetail() {
         </Tabs.List>
 
         {/* Overview tab */}
-        <Tabs.Content value="overview" className="pt-5">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Quality breakdown — all categories */}
-            {data.quality ? (
-              <QualityBreakdown quality={data.quality} />
-            ) : (
-              <Card>
-                <CardContent className="py-8 text-center">
-                  <p className="text-sm text-gray-400 font-sans">Quality data not available for this scan.</p>
-                </CardContent>
-              </Card>
-            )}
+        <Tabs.Content value="overview" className="pt-8">
+          {/* Quality */}
+          {data.quality ? (
+            <QualityBreakdown quality={data.quality} />
+          ) : (
+            <div className="mb-10">
+              <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-4">
+                Quality Score
+              </p>
+              <p className="text-[15px] font-sans text-gray-400">
+                Quality data is not available for this scan.
+              </p>
+            </div>
+          )}
 
-            {/* NTIA checklist */}
-            <NTIAChecklist
-              ntiaCompliant={data.ntiaCompliant}
-              ntia={ntiaData}
-              invalidComponents={data.invalidComponents}
-            />
+          {/* NTIA */}
+          <NTIAChecklist
+            ntiaCompliant={data.ntiaCompliant}
+            ntia={ntiaData}
+            invalidComponents={data.invalidComponents}
+          />
+
+          {/* Top risk components */}
+          <div className="mt-10">
+            <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-6">
+              Top Risk Components
+            </p>
+            <TopComponentsList components={topComponents} />
           </div>
-
-          {/* Top risky components */}
-          <Card className="mt-5">
-            <CardHeader>
-              <CardTitle>Top Risk Components</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <TopComponentsList components={topComponents} />
-            </CardContent>
-          </Card>
         </Tabs.Content>
 
         {/* Components tab */}
-        <Tabs.Content value="components" className="pt-5">
+        <Tabs.Content value="components" className="pt-6">
           <ComponentTable components={data.components ?? []} />
         </Tabs.Content>
 
         {/* Compliance tab */}
         {data.compliance && (
-          <Tabs.Content value="compliance" className="pt-5">
+          <Tabs.Content value="compliance" className="pt-8">
             <CompliancePanel compliance={data.compliance} />
           </Tabs.Content>
         )}
 
         {/* Validation Issues tab */}
-        <Tabs.Content value="issues" className="pt-5">
+        <Tabs.Content value="issues" className="pt-8">
           {issueCount === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-              <CheckCircle size={40} className="text-[#93cb52]" />
-              <p className="font-display font-bold text-lg text-[#464646]">No validation issues</p>
-              <p className="text-sm text-gray-400 font-sans">This SBOM passed all validation checks.</p>
+              <p className="font-display font-bold text-lg text-[#93cb52]">✓ No validation issues</p>
+              <p className="text-[15px] text-gray-400 font-sans">This SBOM passed all validation checks.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-[#e5e7eb]">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">Severity</th>
-                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">Code</th>
-                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">Message</th>
-                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">Component</th>
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="pb-3 text-left text-xs font-display font-bold text-gray-400 uppercase tracking-widest pr-8">
+                      Severity
+                    </th>
+                    <th className="pb-3 text-left text-xs font-display font-bold text-gray-400 uppercase tracking-widest pr-8">
+                      Code
+                    </th>
+                    <th className="pb-3 text-left text-xs font-display font-bold text-gray-400 uppercase tracking-widest pr-8">
+                      Message
+                    </th>
+                    <th className="pb-3 text-left text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
+                      Component
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.validationIssues!.map((issue, idx) => (
-                    <tr key={idx} className="border-t border-[#e5e7eb] odd:bg-white even:bg-gray-50/50">
-                      <td className="px-4 py-3"><IssueSeverityBadge severity={issue.severity} /></td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-500">{issue.code}</td>
-                      <td className="px-4 py-3 text-sm font-sans text-[#464646] max-w-sm">{issue.message}</td>
-                      <td className="px-4 py-3 text-sm font-sans text-gray-400">
+                    <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50">
+                      <td className="py-4 pr-8">
+                        <IssueSeverityText severity={issue.severity} />
+                      </td>
+                      <td className="py-4 pr-8 font-mono text-sm text-gray-400">{issue.code}</td>
+                      <td className="py-4 pr-8 text-[15px] font-sans text-[#464646] max-w-sm">{issue.message}</td>
+                      <td className="py-4 text-[15px] font-sans text-gray-400">
                         {issue.componentName || <span className="text-gray-300">N/A</span>}
                       </td>
                     </tr>
@@ -486,7 +477,7 @@ export default function ScanDetail() {
         </Tabs.Content>
 
         {/* Raw JSON tab */}
-        <Tabs.Content value="raw" className="pt-5">
+        <Tabs.Content value="raw" className="pt-8">
           <div className="rounded-xl bg-[#1a1a2e] border border-[#2a2a3e] overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#2a2a3e]">
               <span className="text-xs font-mono text-gray-500">scan.json</span>
