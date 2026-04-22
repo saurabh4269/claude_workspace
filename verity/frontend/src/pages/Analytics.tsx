@@ -81,7 +81,7 @@ function TrendLine({ trend }: { trend: { date: string; riskScore: number; qualit
               <td className="px-3 py-2 text-gray-500">{new Date(row.date).toLocaleDateString()}</td>
               <td className="px-3 py-2 text-right font-mono">{row.riskScore.toFixed(1)}</td>
               <td className="px-3 py-2 text-right font-mono">
-                {row.qualityScore != null ? row.qualityScore.toFixed(1) : '—'}
+                {row.qualityScore != null ? row.qualityScore.toFixed(1) : 'N/A'}
               </td>
             </tr>
           ))}
@@ -187,7 +187,7 @@ export default function Analytics() {
             <StatCard
               icon={TrendingUp}
               label="Avg Quality Score"
-              value={data.avgQualityScore != null ? data.avgQualityScore.toFixed(1) : '—'}
+              value={data.avgQualityScore != null ? data.avgQualityScore.toFixed(1) : 'N/A'}
               sub="out of 10"
             />
             <StatCard

@@ -398,7 +398,7 @@ export default function History() {
                           {scan.qualityGrade}
                           {scan.qualityScore != null && (
                             <span className="text-sm text-gray-400 font-sans ml-1">
-                              ({scan.qualityScore.toFixed(1)})
+                              {scan.qualityScore.toFixed(1)}
                             </span>
                           )}
                         </span>

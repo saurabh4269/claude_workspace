@@ -3,7 +3,7 @@ import type { ComplianceSummary } from '@/lib/api'
 
 function ScoreBar({ score }: { score: number }) {
   const pct = Math.min(score * 10, 100) // score is 0–10
-  const color = pct >= 80 ? 'bg-[#22c55e]' : pct >= 50 ? 'bg-[#f59e0b]' : 'bg-[#dc2626]'
+  const color = pct >= 70 ? 'bg-[#93cb52]' : pct >= 40 ? 'bg-[#6b7280]' : 'bg-[#dc2626]'
   return (
     <div className="flex items-center gap-3 flex-1">
       <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
@@ -113,9 +113,7 @@ export function CompliancePanel({ compliance }: Props) {
                 <td className="py-4 text-sm text-gray-400 font-sans">
                   {row.note ? (
                     <span>{row.note}</span>
-                  ) : (
-                    <span className="text-gray-300">—</span>
-                  )}
+                  ) : null}
                 </td>
               </tr>
             ))}

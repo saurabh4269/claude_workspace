@@ -2,23 +2,26 @@
 
 **SBOM Validator and Risk Assessment Platform for TPRM**
 
-Verity automates the validation and risk assessment of Software Bill of Materials (SBOM) files. It checks format compliance against NTIA minimum elements, scores component-level risk, queries live vulnerability databases, and produces structured reports, replacing slow manual reviews with a repeatable, auditable process.
+Verity automates the validation and risk assessment of Software Bill of Materials (SBOM) files. It parses multi-format SBOMs, scores quality across seven weighted categories, checks compliance against major regulatory standards, queries live vulnerability databases, and produces structured reports — replacing slow manual reviews with a repeatable, auditable process.
 
 ---
 
 ## Features
 
-- **Multi-format parsing** — CycloneDX JSON, CycloneDX XML, SPDX JSON, SPDX tag-value
-- **NTIA compliance checks** — validates all seven minimum elements from the 2021 NTIA guidance and EO 14028
-- **Risk scoring** — per-component scores based on missing fields, license type (AGPL/GPL/LGPL tiers), and CVE severity
-- **Live vulnerability lookup** — OSV.dev batch API with optional NVD enrichment (no API key required for OSV)
-- **Export** — PDF reports and JSON for downstream tooling
-- **Scan history** — stored in SQLite, queryable with filters and pagination
+- **Multi-format parsing** — CycloneDX JSON/XML (1.4–1.6), SPDX JSON/YAML/tag-value (2.2–2.3)
+- **Quality scoring** — weighted 0–10 score across 7 categories (Structural, Identification, Provenance, Integrity, Licensing, Vulnerability Traceability, Completeness) with letter grade A–F
+- **Compliance validation** — NTIA Minimum Elements, BSI TR-03183-2 (v1.1 / v2.0 / v2.1), FSCT v3, OpenChain Telco v1.1
+- **Risk scoring** — per-component scores based on missing fields, license type (AGPL/GPL/LGPL tiers), and CVE severity; document-level escalation when >30% of components are HIGH+
+- **Live vulnerability lookup** — OSV.dev batch API, CISA KEV catalog, EPSS scores (FIRST.org); optional NVD enrichment for CVSS gaps
+- **Policy engine** — YAML-based allow/deny rules on licenses, component names, score thresholds, and vulnerability attributes
+- **Export** — PDF reports (WeasyPrint, brand-styled) and JSON for downstream tooling
+- **Scan history** — stored in SQLite (or PostgreSQL), queryable with filters and pagination
+- **Workspace analytics** — aggregate statistics, risk distribution, score trends, and top vulnerabilities across a workspace
 - **Workspaces** — invite teammates, share scans across a team
 - **Optional auth** — JWT-based login, disabled by default; toggle on/off from the Settings UI without restarting
 - **CLI** — pipe-friendly, CI/CD ready with configurable fail thresholds
-- **Web UI** — React dashboard with risk charts, component tables, and export buttons
-- **REST API** — OpenAPI docs at `/docs`
+- **Web UI** — React dashboard with quality breakdown, NTIA checklist, compliance panel, component tables, and export buttons
+- **REST API** — OpenAPI docs at `/docs`; CI integration endpoint for automated pipelines
 
 ---
 
@@ -60,8 +63,6 @@ Options:
                                    (default: HIGH)
   --output [text|json]             Output format (default: text)
   --no-save                        Do not store this scan in history
-
-verity version
 ```
 
 **Examples**
@@ -82,6 +83,108 @@ verity scan sbom.xml --fail-on MEDIUM --no-save
 
 ---
 
+## Quality Scoring
+
+Every scan produces a 0–10 quality score and a letter grade (A–F) computed across seven weighted categories:
+
+| Category | Weight | What it measures |
+|---|---|---|
+| Structural | 8 | Spec declaration, version support, file format, schema validity |
+| Identification | 10 | Component names, versions, unique local IDs |
+| Provenance | 12 | Creation timestamp, authors, tool versions, namespace, supplier, lifecycle |
+| Integrity | 15 | Checksums (any and strong SHA-256+), document-level signature |
+| Licensing | 15 | License presence, SPDX validity, declared licenses, deprecated/restrictive license detection |
+| Vulnerability Traceability | 10 | PURL and CPE presence and syntax validity |
+| Completeness | 12 | Primary component, dependency graph, per-component supplier/source/type |
+
+**Grade scale**
+
+| Score | Grade |
+|---|---|
+| 9.0 – 10.0 | A — Excellent |
+| 8.0 – 8.9 | B — Good |
+| 7.0 – 7.9 | C — Acceptable |
+| 5.0 – 6.9 | D — Poor |
+| < 5.0 | F — Needs major rework |
+
+---
+
+## Compliance Standards
+
+| Standard | Scope | Notes |
+|---|---|---|
+| NTIA Minimum Elements (2021) | 7 required elements | Per-component name, version, supplier, unique ID; document author, timestamp, dependency relationships |
+| BSI TR-03183-2 v1.1 | SHALL + SHOULD tiers | CDX 1.4+ / SPDX 2.3+; creator contact, SHA-256 hash, license, dependency resolution |
+| BSI TR-03183-2 v2.0 | Adds: no vuln data, signature, BOM links | CDX 1.5+ / SPDX 2.2.1+; filename property, completeness declaration |
+| BSI TR-03183-2 v2.1 | Latest — CDX 1.6 only | SHA-512 on deployable artifact, declared licenses (acknowledgement field), SBOM URI promoted to SHALL |
+| FSCT v3 | Multi-level scoring | SBOM author, lifecycle, relationships, per-component checksum strength, license quality |
+| OpenChain Telco v1.1 | SPDX only | 26 document + component checks; SHA-256, PURL, concluded/declared license, copyright text |
+
+---
+
+## Risk Levels
+
+| Level | Score | Meaning |
+|---|---|---|
+| LOW | 0 – 20 | No significant issues found |
+| MEDIUM | 21 – 49 | Minor gaps or low-severity CVEs |
+| HIGH | 50 – 79 | Missing critical fields or medium-severity CVEs |
+| CRITICAL | 80+ | Copyleft violations or high-severity CVEs |
+
+**Scoring factors per component**
+
+| Factor | Points |
+|---|---|
+| Missing version | +15 |
+| Missing PURL and CPE | +20 |
+| Missing supplier | +10 |
+| No license info | +10 |
+| AGPL / SSPL license | +30 |
+| GPL-2.0 / GPL-3.0 license | +20 |
+| LGPL / MPL license | +10 |
+| CVE CVSS >= 9.0 | +50 |
+| CVE CVSS 7.0 – 8.9 | +35 |
+| CVE CVSS 4.0 – 6.9 | +20 |
+| CVE CVSS < 4.0 | +10 |
+
+The document-level risk is the highest component risk, escalated one tier if more than 30% of components score HIGH or above.
+
+---
+
+## Policy Engine
+
+Define allow/deny rules in YAML and pass them at scan time:
+
+```yaml
+policy:
+  - id: no_copyleft
+    type: license_denylist
+    licenses: [GPL-2.0-only, GPL-3.0-only, AGPL-3.0-only]
+    action: fail
+
+  - id: approved_licenses
+    type: license_allowlist
+    licenses: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC]
+    action: warn
+
+  - id: quality_gate
+    type: threshold
+    metric: quality_score
+    operator: lt
+    value: 7.0
+    action: fail
+
+  - id: no_kev
+    type: vulnerability
+    filter:
+      in_kev: true
+    action: fail
+```
+
+Supported rule types: `license_denylist`, `license_allowlist`, `component_denylist` (glob patterns on name/PURL), `threshold` (quality/risk/category scores and field coverage ratios), `vulnerability` (by severity, EPSS, KEV status).
+
+---
+
 ## Configuration
 
 All settings are driven by environment variables (or a `.env` file in `verity/backend/`).
@@ -98,11 +201,11 @@ All settings are driven by environment variables (or a `.env` file in `verity/ba
 | `CORS_ORIGINS` | `["http://localhost", ...]` | Allowed CORS origins |
 | `SITE_SETTINGS_PATH` | `/app/data/site_settings.json` | Where UI-driven setting overrides are persisted |
 
-`AUTH_ENABLED`, `HISTORY_ENABLED`, and `VULN_CHECK_ENABLED` can also be toggled live from **Settings → Platform** in the web UI. Changes take effect immediately and are persisted to `SITE_SETTINGS_PATH` so they survive container restarts. Environment variables act as the initial default; UI overrides take precedence once written.
+`AUTH_ENABLED`, `HISTORY_ENABLED`, and `VULN_CHECK_ENABLED` can be toggled live from **Settings** in the web UI. Changes take effect immediately and survive container restarts. Environment variables act as initial defaults; UI overrides take precedence once written.
 
 **Enabling authentication for the first time**
 
-1. Go to **Settings → Platform** and toggle **Authentication** on.
+1. Go to **Settings** and toggle **Authentication** on.
 2. You will be redirected to the login page — click **Sign up** to create the first account.
 3. Subsequent platform-setting changes require admin privileges once auth is on.
 
@@ -116,35 +219,6 @@ Add `asyncpg` to `pyproject.toml` dependencies and rebuild the image.
 
 ---
 
-## Risk Levels
-
-| Level | Score | Meaning |
-|---|---|---|
-| LOW | 0 - 20 | No significant issues found |
-| MEDIUM | 21 - 49 | Minor gaps or low-severity CVEs |
-| HIGH | 50 - 79 | Missing critical fields or medium-severity CVEs |
-| CRITICAL | 80+ | Copyleft license violations or high-severity CVEs |
-
-**Scoring factors per component**
-
-| Factor | Points added |
-|---|---|
-| Missing version | +15 |
-| Missing PURL and CPE | +20 |
-| Missing supplier | +10 |
-| No license info | +10 |
-| AGPL / SSPL license | +30 |
-| GPL-2.0 / GPL-3.0 license | +20 |
-| LGPL / MPL license | +10 |
-| CVE with CVSS >= 9.0 | +50 |
-| CVE with CVSS 7.0 - 8.9 | +35 |
-| CVE with CVSS 4.0 - 6.9 | +20 |
-| CVE with CVSS < 4.0 | +10 |
-
-The document-level risk is the highest component risk, escalated one level if more than 30% of components score HIGH or above.
-
----
-
 ## API Reference
 
 Interactive docs are available at `http://localhost:8000/docs` when the server is running.
@@ -152,24 +226,29 @@ Interactive docs are available at `http://localhost:8000/docs` when the server i
 **Key endpoints**
 
 ```
-POST   /api/v1/scans/upload          Upload and analyse an SBOM file
-GET    /api/v1/scans                 List scans (paginated, filterable)
-GET    /api/v1/scans/{id}            Full scan detail with components
-GET    /api/v1/scans/{id}/export/pdf Download PDF report
-GET    /api/v1/scans/{id}/export/json Download JSON report
-DELETE /api/v1/scans/{id}           Delete a scan
+POST   /api/v1/scans/upload              Upload and analyse an SBOM file
+GET    /api/v1/scans                     List scans (paginated, filterable)
+GET    /api/v1/scans/{id}               Full scan detail with components
+GET    /api/v1/scans/{id}/export/pdf    Download PDF report
+GET    /api/v1/scans/{id}/export/json   Download JSON report
+DELETE /api/v1/scans/{id}              Delete a scan
+GET    /api/v1/scans/{id}/components    Component list (filterable, paginated)
 
-POST   /api/v1/workspaces            Create a workspace
-GET    /api/v1/workspaces            List workspaces
-POST   /api/v1/auth/register         Register (AUTH_ENABLED only)
-POST   /api/v1/auth/login            Login (AUTH_ENABLED only)
-POST   /api/v1/auth/change-password  Change password (AUTH_ENABLED only)
-POST   /api/v1/auth/invite/{ws_id}   Generate an invite link
+POST   /api/v1/ci/scan                  CI integration: scan and return structured result
 
-GET    /api/v1/settings              Get current platform settings
-PATCH  /api/v1/settings              Update platform settings (admin only when auth on)
+GET    /api/v1/workspaces               List workspaces
+POST   /api/v1/workspaces              Create a workspace
+GET    /api/v1/workspaces/{id}/analytics  Aggregate analytics for a workspace
 
-GET    /health                       Health check
+POST   /api/v1/auth/register            Register (AUTH_ENABLED only)
+POST   /api/v1/auth/login               Login (AUTH_ENABLED only)
+POST   /api/v1/auth/change-password     Change password (AUTH_ENABLED only)
+POST   /api/v1/auth/invite/{ws_id}      Generate an invite link
+
+GET    /api/v1/settings                 Get current platform settings
+PATCH  /api/v1/settings                 Update platform settings (admin only when auth on)
+
+GET    /health                          Health check
 ```
 
 ---
@@ -180,19 +259,29 @@ GET    /health                       Health check
 verity/
 ├── backend/
 │   ├── app/
-│   │   ├── core/          # Parser, validator, risk analyzer, vuln checker
-│   │   ├── api/           # FastAPI routes and schemas
-│   │   ├── db/            # SQLAlchemy models and session
-│   │   ├── auth/          # JWT helpers
-│   │   └── exporters/     # PDF and JSON report generation
-│   ├── migrations/        # Alembic schema migrations
-│   ├── cli.py             # Click CLI entry point
-│   └── pyproject.toml     # pip-installable package
+│   │   ├── core/
+│   │   │   ├── parser.py          # Multi-format SBOM parser
+│   │   │   ├── scorer.py          # Quality scoring engine (7 categories)
+│   │   │   ├── risk_analyzer.py   # Per-component and document risk scoring
+│   │   │   ├── vuln_checker.py    # OSV, KEV, EPSS, NVD lookup
+│   │   │   ├── policy.py          # YAML policy engine
+│   │   │   ├── compliance/        # NTIA, BSI, FSCT, OCT checkers
+│   │   │   └── licenses/          # SPDX license database and validator
+│   │   ├── api/
+│   │   │   ├── routes/            # scans, workspaces, auth, ci, settings
+│   │   │   └── schemas.py         # Pydantic request/response models
+│   │   ├── db/                    # SQLAlchemy models and session
+│   │   ├── auth/                  # JWT helpers
+│   │   └── exporters/             # PDF and JSON report generation
+│   ├── migrations/                # Alembic schema migrations
+│   ├── cli.py                     # Click CLI entry point
+│   └── pyproject.toml             # pip-installable package
 └── frontend/
     └── src/
-        ├── components/    # UI primitives and shared components
-        ├── pages/         # Dashboard, NewScan, ScanDetail, History, Settings
-        └── lib/           # API client and utilities
+        ├── components/            # UI primitives, compliance panel, component table
+        ├── pages/                 # Dashboard, NewScan, ScanDetail, History,
+        │                          #   Analytics, Settings
+        └── lib/                   # API client and utilities
 ```
 
 ---
@@ -211,36 +300,26 @@ alembic upgrade head
 
 ---
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Backend | Python 3.11, FastAPI, SQLAlchemy (async), aiosqlite |
-| Vulnerability data | OSV.dev API, NVD (optional) |
-| PDF generation | WeasyPrint |
-| Migrations | Alembic |
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui |
-| Charts | Recharts |
-| Container | Docker, nginx |
-
----
-
 ## Sample SBOMs
 
 Two ready-to-use test files are included in `sample-sboms/`:
 
 | File | Format | Components | Expected result |
 |---|---|---|---|
-| `acme-webapp.cdx.json` | CycloneDX 1.4 JSON | 4 (react, axios, coreutils, legacy-auth) | Risk: HIGH, 3 invalid, 5 NTIA issues |
-| `acme-backend.spdx.json` | SPDX 2.3 JSON | 4 (flask, numpy, cryptography, internal-util) | Risk: HIGH, 2 invalid, 5 NTIA issues |
+| `acme-webapp.cdx.json` | CycloneDX 1.4 JSON | 4 | Risk: HIGH, 3 invalid, 5 NTIA issues |
+| `acme-backend.spdx.json` | SPDX 2.3 JSON | 4 | Risk: HIGH, 2 invalid, 5 NTIA issues |
 
 Both files intentionally include components with missing fields and license issues to exercise the full validation pipeline.
 
 ---
 
-## Supported SBOM Formats
+## Tech Stack
 
-| Format | Variants |
+| Layer | Technology |
 |---|---|
-| CycloneDX | JSON (spec 1.4+), XML (spec 1.4+) |
-| SPDX | JSON (2.3), tag-value (.spdx, .tv) |
+| Backend | Python 3.11, FastAPI, SQLAlchemy (async), aiosqlite |
+| Vulnerability data | OSV.dev, CISA KEV, EPSS (FIRST.org), NVD (optional) |
+| PDF generation | WeasyPrint |
+| Migrations | Alembic |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Container | Docker, nginx |

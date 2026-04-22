@@ -1,34 +1,18 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
-import {
-  Shield,
-  ScanSearch,
-  Key,
-  Users,
-  Plus,
-  Copy,
-  CheckCircle,
-  XCircle,
-  Info,
-  LogIn,
-} from 'lucide-react'
+import { Plus, Copy, Check, LogIn } from 'lucide-react'
 import { auth, workspaces, siteSettings, type WorkspaceResponse } from '@/lib/api'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
 
-function SectionDivider({ title, icon: Icon }: { title: string; icon: React.ElementType }) {
+function SectionLabel({ title }: { title: string }) {
   return (
-    <div className="flex items-center gap-2.5 mt-10 mb-4">
-      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#bef3e2]">
-        <Icon size={14} className="text-[#1c9770]" />
-      </div>
-      <h2 className="font-display font-bold text-base text-[#1c9770] uppercase tracking-wide">
+    <div className="mt-10 mb-4">
+      <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
         {title}
-      </h2>
+      </p>
     </div>
   )
 }
@@ -47,7 +31,7 @@ function Toggle({
   disabled?: boolean
 }) {
   return (
-    <div className="flex items-center justify-between py-3 border-b border-[#e5e7eb] last:border-b-0">
+    <div className="flex items-center justify-between py-3 border-b border-gray-100 last:border-b-0">
       <div className="flex-1 min-w-0 pr-4">
         <p className="text-sm font-sans font-medium text-[#464646]">{label}</p>
         <p className="text-xs text-gray-400 font-sans mt-0.5">{description}</p>
@@ -72,11 +56,11 @@ function Toggle({
   )
 }
 
-function InfoRow({ label, badge }: { label: string; badge: React.ReactNode }) {
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-3 border-b border-[#e5e7eb] last:border-b-0">
-      <span className="text-sm font-sans text-gray-500">{label}</span>
-      <div className="flex items-center gap-2">{badge}</div>
+    <div className="flex items-center justify-between py-3 border-b border-gray-100 last:border-b-0">
+      <span className="text-sm font-sans text-gray-400">{label}</span>
+      <div className="flex items-center gap-2">{value}</div>
     </div>
   )
 }
@@ -119,7 +103,7 @@ function WorkspaceCard({
   }
 
   return (
-    <div className="rounded-xl border border-[#e5e7eb] p-5 space-y-4">
+    <div className="pb-5 border-b border-gray-100 last:border-b-0 space-y-3">
       <div className="flex items-center justify-between">
         <div>
           <p className="font-display font-bold text-sm text-[#464646]">{workspace.name}</p>
@@ -127,7 +111,7 @@ function WorkspaceCard({
             {workspace.memberCount} member{workspace.memberCount !== 1 ? 's' : ''}
           </p>
         </div>
-        <Badge variant="info" className="text-xs">Owner</Badge>
+        <span className="text-sm font-display font-bold text-[#1c9770]">Owner</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -146,14 +130,14 @@ function WorkspaceCard({
       {inviteError && <p className="text-xs text-[#dc2626] font-sans">{inviteError}</p>}
 
       {inviteLink && (
-        <div className="flex items-center gap-2 rounded-lg bg-[#bef3e2] px-3 py-2">
-          <p className="flex-1 truncate font-mono text-xs text-[#1c9770]">{inviteLink}</p>
+        <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+          <p className="flex-1 truncate font-mono text-xs text-[#6b7280]">{inviteLink}</p>
           <button
             onClick={handleCopy}
-            className="text-[#1c9770] hover:text-[#177a5a] transition-colors"
+            className="text-[#1c9770] hover:text-[#177a5a] transition-colors shrink-0"
             aria-label="Copy link"
           >
-            {copied ? <CheckCircle size={14} /> : <Copy size={14} />}
+            {copied ? <Check size={14} /> : <Copy size={14} />}
           </button>
         </div>
       )}
@@ -165,7 +149,6 @@ export default function Settings() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
-  // Per-scan defaults — stored in localStorage, read by NewScan on mount
   const [vulnCheck, setVulnCheck] = useState(
     () => localStorage.getItem('pref_vuln_check') !== 'false'
   )
@@ -182,7 +165,6 @@ export default function Settings() {
     localStorage.setItem('pref_save_history', String(v))
   }
 
-  // Platform settings (server-side)
   const { data: platformSettings, isLoading: platformLoading } = useQuery({
     queryKey: ['site-settings'],
     queryFn: () => siteSettings.get(),
@@ -190,7 +172,6 @@ export default function Settings() {
   })
 
   const [authJustEnabled, setAuthJustEnabled] = useState(false)
-
   const [platformError, setPlatformError] = React.useState<string | null>(null)
 
   const platformMutation = useMutation({
@@ -202,12 +183,9 @@ export default function Settings() {
 
       if ('auth_enabled' in variables) {
         if (data.authEnabled) {
-          // Wipe all cached data so Login.tsx fetches a fresh health response
-          // instead of acting on stale auth_enabled=false data.
           queryClient.clear()
           navigate('/login')
         } else {
-          // Auth turned off — clear stored credentials
           localStorage.removeItem('access_token')
           localStorage.removeItem('refresh_token')
           queryClient.invalidateQueries({ queryKey: ['me'] })
@@ -230,7 +208,6 @@ export default function Settings() {
     platformMutation.mutate({ [key]: value })
   }
 
-  // Auth
   const { data: user } = useQuery({
     queryKey: ['me'],
     queryFn: () => auth.me(),
@@ -238,7 +215,7 @@ export default function Settings() {
   })
   const isAuthEnabled = Boolean(user)
 
-  // Password change
+  const [changingPassword, setChangingPassword] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -251,6 +228,7 @@ export default function Settings() {
       setNewPassword('')
       setConfirmPassword('')
       setPasswordError(null)
+      setTimeout(() => setChangingPassword(false), 1500)
     },
     onError: (err: unknown) => {
       const axiosErr = err as { response?: { data?: { detail?: string } } }
@@ -276,7 +254,6 @@ export default function Settings() {
     passwordMutation.mutate()
   }
 
-  // Workspaces
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
 
@@ -306,7 +283,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-8 max-w-2xl mx-auto space-y-2">
+    <div className="p-8 max-w-2xl mx-auto">
       <div className="mb-6">
         <h1 className="font-display font-bold text-2xl text-[#464646]">Settings</h1>
         <p className="mt-1 text-sm text-gray-400 font-sans">
@@ -315,125 +292,109 @@ export default function Settings() {
       </div>
 
       {/* Per-scan defaults */}
-      <SectionDivider title="Scan Defaults" icon={ScanSearch} />
-      <Card>
-        <CardContent className="pt-6">
-          <Toggle
-            checked={vulnCheck}
-            onChange={handleVulnCheck}
-            label="Enable vulnerability check"
-            description="Default for new scans — queries OSV.dev for known CVEs."
-          />
-          <Toggle
-            checked={saveHistory}
-            onChange={handleSaveHistory}
-            label="Save scans to history"
-            description="Default for new scans — persist results in the History tab."
-          />
-        </CardContent>
-      </Card>
+      <SectionLabel title="Scan Defaults" />
+      <div>
+        <Toggle
+          checked={vulnCheck}
+          onChange={handleVulnCheck}
+          label="Enable vulnerability check"
+          description="Default for new scans. Queries OSV.dev for known CVEs."
+        />
+        <Toggle
+          checked={saveHistory}
+          onChange={handleSaveHistory}
+          label="Save scans to history"
+          description="Default for new scans. Persist results in the History tab."
+        />
+      </div>
 
       {/* Platform settings */}
-      <SectionDivider title="Platform" icon={Shield} />
-      <Card>
-        <CardContent className="pt-6">
-          {platformLoading ? (
-            <div className="flex items-center gap-2 py-3">
-              <Spinner size={16} />
-              <span className="text-sm text-gray-400 font-sans">Loading…</span>
-            </div>
-          ) : (
-            <>
-              <Toggle
-                checked={platformSettings?.authEnabled ?? false}
-                onChange={(v) => handlePlatformToggle('auth_enabled', v)}
-                label="Authentication"
-                description="Require users to sign in. Disabling removes all login requirements."
-                disabled={platformMutation.isPending}
-              />
-              <Toggle
-                checked={platformSettings?.historyEnabled ?? true}
-                onChange={(v) => handlePlatformToggle('history_enabled', v)}
-                label="History"
-                description="Allow scans to be saved to the History tab platform-wide."
-                disabled={platformMutation.isPending}
-              />
-              <Toggle
-                checked={platformSettings?.vulnCheckEnabled ?? true}
-                onChange={(v) => handlePlatformToggle('vuln_check_enabled', v)}
-                label="Vulnerability checking"
-                description="Allow OSV.dev lookups platform-wide. Overrides per-scan setting."
-                disabled={platformMutation.isPending}
-              />
-
-              {/* Platform mutation error */}
-              {platformError && (
-                <div className="mt-2 rounded-lg bg-[#f2eeee] px-4 py-2">
-                  <p className="text-xs text-[#dc2626] font-sans">{platformError}</p>
-                </div>
-              )}
-
-              {/* Account info rows */}
-              {user && (
-                <InfoRow
-                  label="Signed in as"
-                  badge={<span className="text-sm font-sans font-medium text-[#464646]">{user.email}</span>}
-                />
-              )}
-              {user && (
-                <InfoRow
-                  label="Role"
-                  badge={user.isAdmin ? <Badge variant="error">Admin</Badge> : <Badge variant="default">Member</Badge>}
-                />
-              )}
-              <InfoRow
-                label="App version"
-                badge={<span className="text-sm font-sans font-medium text-[#464646]">v0.1.0</span>}
-              />
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Auth just-enabled callout */}
-      {authJustEnabled && (
-        <div className="flex items-start gap-3 rounded-xl bg-[#f7fef9] border border-[#bef3e2] px-4 py-3">
-          <LogIn size={16} className="text-[#1c9770] mt-0.5 flex-shrink-0" />
-          <div className="flex-1">
-            <p className="text-sm font-sans font-medium text-[#1c9770]">Authentication is now enabled.</p>
-            <p className="text-xs text-gray-500 font-sans mt-0.5">
-              Go to{' '}
-              <Link to="/login" className="text-[#1c9770] underline font-semibold">
-                the login page
-              </Link>{' '}
-              to create your first account.
-            </p>
+      <SectionLabel title="Platform" />
+      <div>
+        {platformLoading ? (
+          <div className="flex items-center gap-2 py-3">
+            <Spinner size={16} />
+            <span className="text-sm text-gray-400 font-sans">Loading…</span>
           </div>
-        </div>
+        ) : (
+          <>
+            <Toggle
+              checked={platformSettings?.authEnabled ?? false}
+              onChange={(v) => handlePlatformToggle('auth_enabled', v)}
+              label="Authentication"
+              description="Require users to sign in. Disabling removes all login requirements."
+              disabled={platformMutation.isPending}
+            />
+            <Toggle
+              checked={platformSettings?.historyEnabled ?? true}
+              onChange={(v) => handlePlatformToggle('history_enabled', v)}
+              label="History"
+              description="Allow scans to be saved to the History tab platform-wide."
+              disabled={platformMutation.isPending}
+            />
+            <Toggle
+              checked={platformSettings?.vulnCheckEnabled ?? true}
+              onChange={(v) => handlePlatformToggle('vuln_check_enabled', v)}
+              label="Vulnerability checking"
+              description="Allow OSV.dev lookups platform-wide. Overrides per-scan setting."
+              disabled={platformMutation.isPending}
+            />
+
+            {platformError && (
+              <p className="text-xs text-[#dc2626] font-sans pt-3">{platformError}</p>
+            )}
+
+            {user && (
+              <InfoRow
+                label="Signed in as"
+                value={<span className="text-sm font-sans font-medium text-[#464646]">{user.email}</span>}
+              />
+            )}
+            {user && (
+              <InfoRow
+                label="Role"
+                value={
+                  <span className="text-sm font-display font-bold text-[#464646]">
+                    {user.isAdmin ? 'Admin' : 'Member'}
+                  </span>
+                }
+              />
+            )}
+            <InfoRow
+              label="App version"
+              value={<span className="text-sm font-sans text-gray-400">v0.1.0</span>}
+            />
+          </>
+        )}
+      </div>
+
+      {authJustEnabled && (
+        <p className="mt-4 text-sm font-sans text-[#1c9770]">
+          <LogIn size={13} className="inline mr-1.5 mb-0.5" />
+          Authentication enabled.{' '}
+          <Link to="/login" className="underline font-semibold">
+            Go to login page
+          </Link>{' '}
+          to create your first account.
+        </p>
       )}
 
-      {/* Auth-disabled info note */}
-      {!authJustEnabled && (
-        <div className="flex items-start gap-2 rounded-xl bg-gray-50 border border-[#e5e7eb] px-4 py-3">
-          <Info size={14} className="text-gray-400 mt-0.5 flex-shrink-0" />
-          <p className="text-xs text-gray-400 font-sans">
-            Platform settings take effect immediately and persist across restarts.
-            They can also be set via environment variables (
-            <code className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">AUTH_ENABLED</code>,{' '}
-            <code className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">HISTORY_ENABLED</code>,{' '}
-            <code className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">VULN_CHECK_ENABLED</code>).
-          </p>
-        </div>
-      )}
-
-      {/* Change Password — only when auth is enabled and user is logged in */}
+      {/* Change Password */}
       {isAuthEnabled && (
         <>
-          <SectionDivider title="Change Password" icon={Key} />
-          <Card>
-            <CardContent className="pt-6 space-y-3">
+          <SectionLabel title="Account" />
+          {!changingPassword ? (
+            <button
+              type="button"
+              onClick={() => setChangingPassword(true)}
+              className="text-sm font-sans text-[#1c9770] hover:underline"
+            >
+              Change password
+            </button>
+          ) : (
+            <div className="space-y-3">
               <div>
-                <label className="text-xs font-display font-bold text-gray-500 block mb-1">
+                <label className="text-xs font-display font-bold text-gray-400 block mb-1">
                   Current password
                 </label>
                 <Input
@@ -444,7 +405,7 @@ export default function Settings() {
                 />
               </div>
               <div>
-                <label className="text-xs font-display font-bold text-gray-500 block mb-1">
+                <label className="text-xs font-display font-bold text-gray-400 block mb-1">
                   New password
                 </label>
                 <Input
@@ -455,7 +416,7 @@ export default function Settings() {
                 />
               </div>
               <div>
-                <label className="text-xs font-display font-bold text-gray-500 block mb-1">
+                <label className="text-xs font-display font-bold text-gray-400 block mb-1">
                   Confirm new password
                 </label>
                 <Input
@@ -474,76 +435,89 @@ export default function Settings() {
                 <p className="text-xs text-[#93cb52] font-sans">Password updated successfully.</p>
               )}
 
-              <Button
-                size="sm"
-                onClick={handleChangePassword}
-                disabled={passwordMutation.isPending}
-              >
-                {passwordMutation.isPending ? <Spinner size={14} className="text-white" /> : null}
-                Update Password
-              </Button>
-            </CardContent>
-          </Card>
+              <div className="flex items-center gap-3">
+                <Button
+                  size="sm"
+                  onClick={handleChangePassword}
+                  disabled={passwordMutation.isPending}
+                >
+                  {passwordMutation.isPending ? <Spinner size={14} className="text-white" /> : null}
+                  Update password
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChangingPassword(false)
+                    setCurrentPassword('')
+                    setNewPassword('')
+                    setConfirmPassword('')
+                    setPasswordError(null)
+                  }}
+                  className="text-sm font-sans text-gray-400 hover:text-[#464646]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
-      {/* Workspaces — only when auth is enabled and user is logged in */}
+      {/* Workspaces */}
       {isAuthEnabled && (
         <>
-          <SectionDivider title="Workspaces" icon={Users} />
-          <Card>
-            <CardContent className="pt-6">
-              {wsLoading ? (
-                <div className="flex items-center gap-2 py-4">
-                  <Spinner size={16} />
-                  <span className="text-sm text-gray-400 font-sans">Loading workspaces...</span>
-                </div>
-              ) : !workspaceList || workspaceList.length === 0 ? (
-                <p className="text-sm text-gray-400 font-sans py-2">No workspaces yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {workspaceList.map((ws) => (
-                    <WorkspaceCard key={ws.id} workspace={ws} onInvite={handleInvite} />
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-4 pt-4 border-t border-[#e5e7eb]">
-                <p className="text-xs font-display font-bold text-gray-500 mb-2">
-                  Create new workspace
-                </p>
-                <div className="flex items-center gap-2">
-                  <Input
-                    placeholder="Workspace name..."
-                    value={newWorkspaceName}
-                    onChange={(e) => setNewWorkspaceName(e.target.value)}
-                    onKeyDown={(e) =>
-                      e.key === 'Enter' &&
-                      newWorkspaceName.trim() &&
-                      createWorkspaceMutation.mutate(newWorkspaceName.trim())
-                    }
-                  />
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      if (newWorkspaceName.trim()) createWorkspaceMutation.mutate(newWorkspaceName.trim())
-                    }}
-                    disabled={createWorkspaceMutation.isPending || !newWorkspaceName.trim()}
-                  >
-                    {createWorkspaceMutation.isPending ? (
-                      <Spinner size={14} className="text-white" />
-                    ) : (
-                      <Plus size={14} />
-                    )}
-                    Create
-                  </Button>
-                </div>
-                {createError && (
-                  <p className="mt-2 text-xs text-[#dc2626] font-sans">{createError}</p>
-                )}
+          <SectionLabel title="Workspaces" />
+          <div>
+            {wsLoading ? (
+              <div className="flex items-center gap-2 py-4">
+                <Spinner size={16} />
+                <span className="text-sm text-gray-400 font-sans">Loading workspaces...</span>
               </div>
-            </CardContent>
-          </Card>
+            ) : !workspaceList || workspaceList.length === 0 ? (
+              <p className="text-sm text-gray-400 font-sans py-2">No workspaces yet.</p>
+            ) : (
+              <div className="space-y-5">
+                {workspaceList.map((ws) => (
+                  <WorkspaceCard key={ws.id} workspace={ws} onInvite={handleInvite} />
+                ))}
+              </div>
+            )}
+
+            <div className="mt-6 pt-4 border-t border-gray-100">
+              <p className="text-xs font-display font-bold text-gray-400 mb-2">
+                Create new workspace
+              </p>
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="Workspace name..."
+                  value={newWorkspaceName}
+                  onChange={(e) => setNewWorkspaceName(e.target.value)}
+                  onKeyDown={(e) =>
+                    e.key === 'Enter' &&
+                    newWorkspaceName.trim() &&
+                    createWorkspaceMutation.mutate(newWorkspaceName.trim())
+                  }
+                />
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    if (newWorkspaceName.trim()) createWorkspaceMutation.mutate(newWorkspaceName.trim())
+                  }}
+                  disabled={createWorkspaceMutation.isPending || !newWorkspaceName.trim()}
+                >
+                  {createWorkspaceMutation.isPending ? (
+                    <Spinner size={14} className="text-white" />
+                  ) : (
+                    <Plus size={14} />
+                  )}
+                  Create
+                </Button>
+              </div>
+              {createError && (
+                <p className="mt-2 text-xs text-[#dc2626] font-sans">{createError}</p>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>

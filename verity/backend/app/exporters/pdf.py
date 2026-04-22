@@ -14,26 +14,26 @@ _GRAY = "#464646"
 _GRAY_LIGHT = "#6b7280"
 _BORDER = "#e5e7eb"
 
-_RISK_PALETTE: dict[str, tuple[str, str]] = {
-    "LOW":      ("#22c55e", "#ffffff"),
-    "MEDIUM":   ("#f59e0b", "#ffffff"),
-    "HIGH":     ("#f97316", "#ffffff"),
-    "CRITICAL": ("#dc2626", "#ffffff"),
-    "UNKNOWN":  ("#9ca3af", "#ffffff"),
+_RISK_PALETTE: dict[str, str] = {
+    "LOW":      "#93cb52",
+    "MEDIUM":   "#6b7280",
+    "HIGH":     "#464646",
+    "CRITICAL": "#dc2626",
+    "UNKNOWN":  "#9ca3af",
 }
 
 _GRADE_PALETTE: dict[str, str] = {
-    "A": "#22c55e",
+    "A": "#93cb52",
     "B": "#93cb52",
-    "C": "#f59e0b",
-    "D": "#f97316",
+    "C": "#6b7280",
+    "D": "#6b7280",
     "F": "#dc2626",
 }
 
 _SEV_PALETTE: dict[str, str] = {
     "ERROR":    "#dc2626",
-    "WARNING":  "#f59e0b",
-    "INFO":     "#3b82f6",
+    "WARNING":  "#464646",
+    "INFO":     "#6b7280",
 }
 
 
@@ -72,54 +72,41 @@ def _esc(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Badge helpers
+# Colored text helpers (no pill/badge backgrounds)
 # ---------------------------------------------------------------------------
 
-def _badge(text: str, bg: str, fg: str = "#ffffff") -> str:
-    return (
-        f'<span style="background:{bg};color:{fg};padding:2px 9px;'
-        f'border-radius:20px;font-weight:700;font-size:0.8em;'
-        f'letter-spacing:0.02em;white-space:nowrap;">{_esc(text)}</span>'
-    )
+def _risk_label(level: str) -> str:
+    color = _RISK_PALETTE.get(str(level).upper(), "#9ca3af")
+    return f'<span style="color:{color};font-weight:700;font-size:0.85em;">{_esc(level.upper())}</span>'
 
 
-def _risk_badge(level: str) -> str:
-    bg, fg = _RISK_PALETTE.get(str(level).upper(), ("#9ca3af", "#ffffff"))
-    return _badge(level.upper(), bg, fg)
-
-
-def _grade_badge(grade: str) -> str:
-    color = _GRADE_PALETTE.get(str(grade).upper(), "#9ca3af")
-    return _badge(grade, color)
-
-
-def _pass_badge(ok: bool, partial: bool = False) -> str:
+def _pass_label(ok: bool, partial: bool = False) -> str:
     if ok:
-        return _badge("PASS", "#22c55e")
+        return f'<span style="color:#93cb52;font-weight:700;">Pass</span>'
     if partial:
-        return _badge("PARTIAL", "#f59e0b")
-    return _badge("FAIL", "#dc2626")
+        return f'<span style="color:#6b7280;font-weight:700;">Partial</span>'
+    return f'<span style="color:#dc2626;font-weight:700;">Fail</span>'
 
 
-def _sev_badge(severity: str) -> str:
+def _sev_label(severity: str) -> str:
     color = _SEV_PALETTE.get(severity.upper(), "#9ca3af")
-    return _badge(severity, color)
+    return f'<span style="color:{color};font-weight:700;font-size:0.85em;">{_esc(severity)}</span>'
+
+
+def _kev_label() -> str:
+    return f'<span style="color:#dc2626;font-weight:700;font-size:0.82em;">KEV</span>'
 
 
 # ---------------------------------------------------------------------------
 # Score bar helper
 # ---------------------------------------------------------------------------
 
-def _score_bar(score: float, max_score: float = 10.0, height: str = "6px") -> str:
+def _score_bar(score: float, max_score: float = 10.0, height: str = "5px") -> str:
     pct = min(100.0, max(0.0, score / max_score * 100))
-    if pct >= 80:
-        color = "#22c55e"
-    elif pct >= 60:
+    if pct >= 70:
         color = "#93cb52"
     elif pct >= 40:
-        color = "#f59e0b"
-    elif pct >= 20:
-        color = "#f97316"
+        color = "#6b7280"
     else:
         color = "#dc2626"
     return (
@@ -127,7 +114,7 @@ def _score_bar(score: float, max_score: float = 10.0, height: str = "6px") -> st
         f'<div style="flex:1;background:#e5e7eb;border-radius:3px;height:{height};overflow:hidden;">'
         f'<div style="width:{pct:.1f}%;background:{color};height:{height};border-radius:3px;"></div>'
         f'</div>'
-        f'<span style="font-size:0.78em;color:{_GRAY_LIGHT};min-width:28px;text-align:right;">'
+        f'<span style="font-size:0.86em;color:{_GRAY_LIGHT};min-width:30px;text-align:right;">'
         f'{score:.1f}</span>'
         f'</div>'
     )
@@ -139,15 +126,15 @@ def _score_bar(score: float, max_score: float = 10.0, height: str = "6px") -> st
 
 def _section(title: str) -> str:
     return (
-        f'<div style="border-left:4px solid {_TEAL};padding-left:10px;'
-        f'margin:28px 0 14px 0;">'
-        f'<span style="font-size:1.0em;font-weight:700;color:{_GRAY};">{_esc(title)}</span>'
+        f'<div style="border-left:3px solid {_TEAL};padding-left:10px;'
+        f'margin:26px 0 12px 0;">'
+        f'<span style="font-family:\'DM Sans\',sans-serif;font-size:1.15em;font-weight:700;color:{_GRAY};letter-spacing:0.01em;">{_esc(title)}</span>'
         f'</div>'
     )
 
 
 # ---------------------------------------------------------------------------
-# Cover page
+# Report header (compact — no forced page break)
 # ---------------------------------------------------------------------------
 
 def _build_cover(scan: dict) -> str:
@@ -168,62 +155,54 @@ def _build_cover(scan: dict) -> str:
     invalid = scan.get("invalid_components", 0)
 
     ntia_text = "Compliant" if ntia else "Non-compliant"
-    ntia_color = "#22c55e" if ntia else "#dc2626"
+    ntia_color = "#93cb52" if ntia else "#dc2626"
+    risk_color = _RISK_PALETTE.get(risk_level, "#9ca3af")
+    vuln_color = "#dc2626" if vulnerable > 0 else _GRAY
 
-    q_cell = (
-        f'<div class="metric-cell">'
-        f'<div class="metric-value" style="color:{_GRADE_PALETTE.get(q_grade, _GRAY)};">{_esc(q_grade)}</div>'
-        f'<div class="metric-label">Quality Grade</div>'
-        f'<div class="metric-sub">{q_score:.1f} / 10</div>'
-        f'</div>'
-    ) if q_score is not None else (
-        f'<div class="metric-cell">'
-        f'<div class="metric-value">—</div>'
-        f'<div class="metric-label">Quality Grade</div>'
-        f'</div>'
-    )
+    q_value = f'{_esc(q_grade)} &nbsp;<span style="font-size:0.6em;font-weight:400;color:{_GRAY_LIGHT};">{q_score:.1f}/10</span>' if q_score is not None else "N/A"
+    q_color = _GRADE_PALETTE.get(q_grade, _GRAY) if q_score is not None else _GRAY_LIGHT
 
-    risk_bg, _ = _RISK_PALETTE.get(risk_level, ("#9ca3af", "#fff"))
+    invalid_note = f'<div class="metric-sub">{invalid} invalid</div>' if invalid else ''
 
     return f"""
-    <div class="cover-page">
-      <div class="cover-band">
-        <div class="cover-brand">Verity</div>
-        <div class="cover-report-title">SBOM Compliance Report</div>
+    <div class="report-header">
+      <div class="header-band">
+        <div class="header-brand">Verity</div>
+        <div class="header-tagline">SBOM Compliance Report</div>
       </div>
-
-      <div class="cover-body">
-        <div class="cover-filename">{filename}</div>
-        <div class="cover-meta-row">
-          <span>{sbom_format} {fmt_version}</span>
-          <span class="dot">·</span>
-          <span>{created_at}</span>
-        </div>
-
-        <div class="metrics-grid">
-          <div class="metric-cell">
-            <div class="metric-value">{total}</div>
-            <div class="metric-label">Components</div>
+      <div class="header-body">
+        <div class="doc-filename">{filename}</div>
+        <div class="doc-meta">{sbom_format}{(' ' + fmt_version) if fmt_version else ''}  &nbsp;·&nbsp;  {created_at}</div>
+        <div class="metrics-strip">
+          <div class="metric-item">
+            <div class="metric-num">{total}</div>
+            <div class="metric-lbl">Components</div>
           </div>
-          <div class="metric-cell">
-            <div class="metric-value" style="color:{'#dc2626' if vulnerable > 0 else _GRAY};">{vulnerable}</div>
-            <div class="metric-label">Vulnerable</div>
-            {f'<div class="metric-sub">{invalid} invalid fields</div>' if invalid else ''}
+          <div class="metric-divider"></div>
+          <div class="metric-item">
+            <div class="metric-num" style="color:{vuln_color};">{vulnerable}</div>
+            <div class="metric-lbl">Vulnerable</div>
+            {invalid_note}
           </div>
-          <div class="metric-cell">
-            <div class="metric-value" style="color:{risk_bg};">{risk_level}</div>
-            <div class="metric-label">Risk Level</div>
-            <div class="metric-sub">Score {risk_score:.1f}</div>
+          <div class="metric-divider"></div>
+          <div class="metric-item">
+            <div class="metric-num" style="color:{risk_color};">{risk_level}</div>
+            <div class="metric-lbl">Risk Level</div>
+            <div class="metric-sub">score {risk_score:.1f}</div>
           </div>
-          {q_cell}
-          <div class="metric-cell">
-            <div class="metric-value" style="color:{ntia_color};">{ntia_text}</div>
-            <div class="metric-label">NTIA Status</div>
+          <div class="metric-divider"></div>
+          <div class="metric-item">
+            <div class="metric-num" style="color:{q_color};">{q_value}</div>
+            <div class="metric-lbl">Quality</div>
+          </div>
+          <div class="metric-divider"></div>
+          <div class="metric-item">
+            <div class="metric-num" style="color:{ntia_color};">{ntia_text}</div>
+            <div class="metric-lbl">NTIA</div>
           </div>
         </div>
       </div>
     </div>
-    <div class="page-break"></div>
 """
 
 
@@ -261,7 +240,7 @@ def _build_quality_section(scan: dict) -> str:
     )[:4]
     action_items = "".join(
         f'<li style="margin-bottom:3px;"><strong>{_esc(c.get("name",""))}</strong>'
-        f' — {c.get("score",0):.1f}/10</li>'
+        f': {c.get("score",0):.1f}/10</li>'
         for c in weak
     ) if weak else '<li>No categories below threshold.</li>'
 
@@ -314,15 +293,15 @@ def _build_compliance_section(scan: dict) -> str:
         rows += (
             f'<tr style="background:{_TEAL_LIGHT};">'
             f'<td><strong>NTIA Minimum Elements</strong></td>'
-            f'<td>{_pass_badge(ok)}</td>'
+            f'<td>{_pass_label(ok)}</td>'
             f'<td>{_score_bar(score)}</td>'
             f'<td style="color:{_GRAY_LIGHT};">{passing}/{len(elements)} elements</td>'
             f'</tr>\n'
         )
         for elem in elements:
             elem_ok = elem.get("compliant", False)
-            icon = "✓" if elem_ok else "✗"
-            icon_color = "#22c55e" if elem_ok else "#dc2626"
+            icon = "+" if elem_ok else "-"
+            icon_color = "#93cb52" if elem_ok else "#dc2626"
             detail = _esc(elem.get("detail", ""))
             rows += (
                 f'<tr>'
@@ -361,7 +340,7 @@ def _build_compliance_section(scan: dict) -> str:
         rows += (
             f'<tr style="background:{_TEAL_LIGHT};">'
             f'<td><strong>{_esc(label)}</strong></td>'
-            f'<td>{_pass_badge(ok, partial)}</td>'
+            f'<td>{_pass_label(ok, partial)}</td>'
             f'<td>{_score_bar(score)}</td>'
             f'<td style="color:{_GRAY_LIGHT};">{detail}</td>'
             f'</tr>\n'
@@ -410,9 +389,9 @@ def _build_vulnerability_section(scan: dict) -> str:
     banner = ""
     if kev_count:
         banner = (
-            f'<div class="callout callout-crit">'
-            f'<strong>{kev_count} CVE(s) in CISA KEV catalog</strong> — active exploitation confirmed. Remediate immediately.'
-            f'</div>'
+            f'<p style="font-size:0.88em;color:#dc2626;font-weight:700;margin-bottom:8px;">'
+            f'{kev_count} CVE(s) in CISA KEV catalog. Active exploitation confirmed. Remediate immediately.'
+            f'</p>'
         )
 
     rows = ""
@@ -425,22 +404,22 @@ def _build_vulnerability_section(scan: dict) -> str:
         in_kev = vuln.get("in_kev", False)
         fixed = _esc(vuln.get("fixed_version") or "")
 
-        epss_cell = f"{epss:.3f}" if epss is not None else "—"
+        epss_cell = f"{epss:.3f}" if epss is not None else "N/A"
         if epss_pct is not None and epss is not None:
-            epss_cell += f" ({epss_pct:.0f}th%)"
+            epss_cell += f" {epss_pct:.0f}th pct"
 
-        kev_cell = _badge("KEV", "#dc2626") if in_kev else ""
-        row_bg = "#fff1f2" if in_kev else ("#fffbeb" if (epss or 0) > 0.5 else "#ffffff")
+        kev_cell = _kev_label() if in_kev else ""
+        row_bg = "#fff9f9" if in_kev else "#ffffff"
 
         rows += (
             f'<tr style="background:{row_bg};">'
             f'<td style="font-family:monospace;font-size:0.85em;">{vid}</td>'
             f'<td style="font-size:0.88em;">{_esc(comp_name)}</td>'
-            f'<td>{_risk_badge(severity)}</td>'
+            f'<td>{_risk_label(severity)}</td>'
             f'<td style="text-align:center;font-size:0.88em;">{cvss:.1f}</td>'
             f'<td style="text-align:center;font-size:0.85em;">{epss_cell}</td>'
             f'<td style="text-align:center;">{kev_cell}</td>'
-            f'<td style="font-size:0.82em;color:{_GRAY_LIGHT};">{fixed or "—"}</td>'
+            f'<td style="font-size:0.82em;color:{_GRAY_LIGHT};">{fixed or "N/A"}</td>'
             f'</tr>\n'
         )
 
@@ -451,7 +430,7 @@ def _build_vulnerability_section(scan: dict) -> str:
     )
 
     return f"""
-    {_section(f"Vulnerabilities — {len(all_vulns)} total · {kev_count} KEV · {high_epss} high-EPSS")}
+    {_section(f"Vulnerabilities: {len(all_vulns)} total  {kev_count} KEV  {high_epss} high-EPSS")}
     {banner}
     <table>
       <thead>
@@ -488,9 +467,9 @@ def _build_component_section(scan: dict) -> str:
     rows = ""
     for comp in shown:
         name = _esc(comp.get("name", ""))
-        version = _esc(comp.get("version") or "—")
-        supplier = _esc(comp.get("supplier") or "—")
-        licenses = _esc(", ".join(comp.get("licenses") or []) or "—")
+        version = _esc(comp.get("version") or "N/A")
+        supplier = _esc(comp.get("supplier") or "N/A")
+        licenses = _esc(", ".join(comp.get("licenses") or []) or "N/A")
         risk = str(comp.get("risk_level", "")).upper()
         score = comp.get("risk_score", 0.0)
         vuln_count = len(comp.get("vulnerabilities") or [])
@@ -502,10 +481,10 @@ def _build_component_section(scan: dict) -> str:
             f'<td style="font-size:0.85em;">{supplier}</td>'
             f'<td style="font-size:0.78em;color:{_GRAY_LIGHT};">{purl}</td>'
             f'<td style="font-size:0.85em;">{licenses}</td>'
-            f'<td>{_risk_badge(risk)}</td>'
+            f'<td>{_risk_label(risk)}</td>'
             f'<td style="text-align:center;font-size:0.85em;">{score:.0f}</td>'
             f'<td style="text-align:center;color:{"#dc2626" if vuln_count else _GRAY_LIGHT};">'
-            f'{"<strong>" if vuln_count else ""}{vuln_count if vuln_count else "—"}{"</strong>" if vuln_count else ""}</td>'
+            f'{"<strong>" if vuln_count else ""}{vuln_count if vuln_count else "0"}{"</strong>" if vuln_count else ""}</td>'
             f'</tr>\n'
         )
 
@@ -517,7 +496,7 @@ def _build_component_section(scan: dict) -> str:
     )
 
     return f"""
-    {_section(f"Component Inventory — {total} components")}
+    {_section(f"Component Inventory: {total} components")}
     <table>
       <thead>
         <tr>
@@ -556,21 +535,20 @@ def _build_issues_section(scan: dict) -> str:
             sev = issue.get("severity", "")
             code = _esc(issue.get("code", ""))
             msg = _esc(issue.get("message", ""))
-            comp = _esc(issue.get("component_name") or "—")
-            row_bg = "#fff1f2" if sev == "ERROR" else ("#fffbeb" if sev == "WARNING" else "#ffffff")
+            comp = _esc(issue.get("component_name") or "N/A")
             rows += (
-                f'<tr style="background:{row_bg};">'
-                f'<td>{_sev_badge(sev)}</td>'
+                f'<tr>'
+                f'<td>{_sev_label(sev)}</td>'
                 f'<td style="font-family:monospace;font-size:0.82em;">{code}</td>'
                 f'<td style="font-size:0.88em;">{msg}</td>'
                 f'<td style="font-size:0.88em;color:{_GRAY_LIGHT};">{comp}</td>'
                 f'</tr>\n'
             )
 
-    summary = f"{len(errors)} errors · {len(warnings)} warnings · {len(infos)} info"
+    summary = f"{len(errors)} errors  {len(warnings)} warnings  {len(infos)} info"
 
     return f"""
-    {_section(f"Validation Issues — {summary}")}
+    {_section(f"Validation Issues: {summary}")}
     <table>
       <thead>
         <tr>
@@ -603,151 +581,152 @@ def _build_html(scan: dict) -> str:
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<title>Verity SBOM Report — {filename}</title>
+<title>Verity SBOM Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin=""/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; }}
   body {{
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family: 'Inter', sans-serif;
     color: {_GRAY};
     margin: 0;
     padding: 0;
     font-size: 11.5px;
-    line-height: 1.55;
+    line-height: 1.65;
   }}
 
-  /* Cover */
-  .cover-page {{
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
+  /* ---- Report header (compact, first page only) ---- */
+  .report-header {{
+    margin-bottom: 0;
   }}
-  .cover-band {{
+  .header-band {{
     background: {_TEAL};
     color: #ffffff;
-    padding: 40px 48px 36px;
+    padding: 18px 40px;
+    display: flex;
+    align-items: baseline;
+    gap: 20px;
   }}
-  .cover-brand {{
-    font-size: 2em;
-    font-weight: 900;
-    letter-spacing: 0.06em;
-    margin-bottom: 6px;
-    opacity: 0.9;
+  .header-brand {{
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1.6em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
   }}
-  .cover-report-title {{
-    font-size: 1.35em;
-    font-weight: 600;
-    opacity: 0.85;
+  .header-tagline {{
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9em;
+    font-weight: 400;
+    opacity: 0.8;
   }}
-  .cover-body {{
-    padding: 36px 48px;
-    flex: 1;
+  .header-body {{
+    padding: 20px 40px 0;
+    border-bottom: 1px solid {_BORDER};
+    padding-bottom: 20px;
   }}
-  .cover-filename {{
-    font-size: 1.5em;
+  .doc-filename {{
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1.3em;
     font-weight: 700;
     color: {_GRAY};
     word-break: break-all;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
   }}
-  .cover-meta-row {{
+  .doc-meta {{
+    font-family: 'Inter', sans-serif;
     color: {_GRAY_LIGHT};
-    font-size: 0.9em;
-    margin-bottom: 32px;
+    font-size: 0.92em;
+    margin-bottom: 16px;
   }}
-  .dot {{ margin: 0 8px; }}
-  .metrics-grid {{
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1px;
-    background: {_BORDER};
+
+  /* ---- Metrics strip ---- */
+  .metrics-strip {{
+    display: flex;
+    align-items: stretch;
     border: 1px solid {_BORDER};
-    border-radius: 10px;
+    border-radius: 8px;
     overflow: hidden;
-    max-width: 560px;
   }}
-  .metric-cell {{
+  .metric-item {{
+    flex: 1;
+    padding: 12px 16px;
     background: #ffffff;
-    padding: 18px 20px;
   }}
-  .metric-value {{
-    font-size: 1.6em;
-    font-weight: 800;
+  .metric-divider {{
+    width: 1px;
+    background: {_BORDER};
+    flex-shrink: 0;
+  }}
+  .metric-num {{
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1.35em;
+    font-weight: 700;
     color: {_GRAY};
-    line-height: 1.1;
+    line-height: 1.15;
   }}
-  .metric-label {{
+  .metric-lbl {{
+    font-family: 'Inter', sans-serif;
     font-size: 0.78em;
     color: {_GRAY_LIGHT};
-    margin-top: 3px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    margin-top: 3px;
   }}
   .metric-sub {{
+    font-family: 'Inter', sans-serif;
     font-size: 0.78em;
     color: #9ca3af;
     margin-top: 2px;
   }}
 
-  /* Content area */
-  .content {{ padding: 24px 48px 40px; }}
+  /* ---- Main content ---- */
+  .content {{
+    padding: 8px 40px 40px;
+  }}
 
-  /* Tables */
+  /* ---- Tables ---- */
   table {{
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 10px;
-    font-size: 0.87em;
+    margin-bottom: 12px;
+    font-size: 0.93em;
   }}
   th {{
+    font-family: 'DM Sans', sans-serif;
     background: {_TEAL_MID};
     color: {_GRAY};
-    padding: 7px 10px;
+    padding: 8px 12px;
     text-align: left;
     font-weight: 700;
-    font-size: 0.82em;
+    font-size: 0.84em;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    border-bottom: 1px solid {_BORDER};
   }}
   td {{
-    padding: 6px 10px;
-    border-bottom: 1px solid #f3f4f6;
+    padding: 7px 12px;
+    border-bottom: 1px solid #f0f0f0;
     vertical-align: middle;
   }}
-  tr:nth-child(even) td {{ background: #fafafa; }}
+  tr:last-child td {{ border-bottom: none; }}
 
-  /* Callout boxes */
-  .callout {{
-    padding: 10px 14px;
-    border-radius: 6px;
-    margin-bottom: 12px;
-    font-size: 0.88em;
+  /* ---- Page setup ---- */
+  @page {{
+    margin: 1.2cm 1.0cm;
+    @bottom-left {{
+      content: "Generated by Verity SBOM Validator";
+      font-family: 'Inter', sans-serif;
+      font-size: 8px;
+      color: #d1d5db;
+    }}
+    @bottom-right {{
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: 'Inter', sans-serif;
+      font-size: 8px;
+      color: #d1d5db;
+    }}
   }}
-  .callout-title {{
-    font-weight: 700;
-    margin-bottom: 4px;
-  }}
-  .callout-crit {{
-    background: #fff1f2;
-    border-left: 4px solid #dc2626;
-    color: #991b1b;
-  }}
-  .callout-warn {{
-    background: #fffbeb;
-    border-left: 4px solid #f59e0b;
-    color: #92400e;
-  }}
-
-  /* Page layout */
-  .page-break {{ page-break-after: always; }}
-  .footer {{
-    text-align: center;
-    color: #d1d5db;
-    font-size: 0.76em;
-    padding: 20px 48px;
-    border-top: 1px solid {_BORDER};
-    margin-top: 32px;
-  }}
-  @page {{ margin: 1.4cm 1.2cm; }}
 </style>
 </head>
 <body>
@@ -758,9 +737,6 @@ def _build_html(scan: dict) -> str:
 {vuln_section}
 {component_section}
 {issues_section}
-</div>
-<div class="footer">
-  Generated by Verity SBOM Validator
 </div>
 </body>
 </html>"""

@@ -41,7 +41,18 @@ function LoadingSkeleton() {
   )
 }
 
+function useGreeting() {
+  const userEmail = localStorage.getItem('user_email') ?? ''
+  const rawName = userEmail.split('@')[0].replace(/[._-]/g, ' ').trim()
+  const name = rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : ''
+  const hour = new Date().getHours()
+  const salutation = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  return { salutation, name }
+}
+
 export default function Dashboard() {
+  const greeting = useGreeting()
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ['scans', { perPage: 10, page: 1 }],
     queryFn: () => scans.list({ perPage: 10, page: 1 }),
@@ -95,11 +106,26 @@ export default function Dashboard() {
 
   return (
     <div className="p-10 space-y-12">
+      {/* Greeting */}
+      <div>
+        <h1 className="font-display font-bold text-2xl">
+          <span className="text-[#1c9770]">{greeting.salutation}</span>
+          {greeting.name ? `, ${greeting.name}.` : '.'}
+        </h1>
+        {total > 0 && (
+          <p className="mt-1 text-[15px] font-sans text-gray-400">
+            {highCriticalCount > 0
+              ? `${highCriticalCount} scan${highCriticalCount !== 1 ? 's' : ''} need your attention.`
+              : 'Everything looks good across your scans.'}
+          </p>
+        )}
+      </div>
+
       {/* Stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 border border-gray-100 rounded-xl divide-x divide-y sm:divide-y-0 divide-gray-100">
         {[
           { label: 'Total Scans', value: total },
-          { label: 'Vulnerable Components', value: totalVulnerable },
+          { label: 'Vulnerable', value: totalVulnerable },
           { label: 'NTIA Compliant', value: `${ntiaCompliant}%` },
           { label: 'High / Critical', value: highCriticalCount },
         ].map(({ label, value }) => (
@@ -110,97 +136,69 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Risk distribution */}
-      <div>
-        <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-6">
-          Risk Distribution
-        </p>
-        <div className="space-y-3">
-          {(
-            [
-              { level: 'CRITICAL', color: 'bg-[#dc2626]', text: 'text-[#dc2626]' },
-              { level: 'HIGH', color: 'bg-[#f97316]', text: 'text-[#f97316]' },
-              { level: 'MEDIUM', color: 'bg-[#f59e0b]', text: 'text-[#f59e0b]' },
-              { level: 'LOW', color: 'bg-[#93cb52]', text: 'text-[#93cb52]' },
-            ] as const
-          ).map(({ level, color, text }) => {
-            const count = levelCounts[level]
-            const pct = items.length > 0 ? (count / items.length) * 100 : 0
-            return (
-              <div key={level} className="flex items-center gap-4">
-                <span className={`w-20 text-[15px] font-display font-bold ${text}`}>{level}</span>
-                <div className="flex-1 h-1.5 rounded-full bg-gray-100">
-                  <div
-                    className={`h-1.5 rounded-full ${color} transition-all`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span className="w-6 text-right text-[15px] font-sans text-gray-400">{count}</span>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Recent scans */}
-      <div>
-        <div className="flex items-center justify-between mb-6">
-          <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
-            Recent Scans
-          </p>
-          <Link to="/history" className="text-sm font-sans text-[#1c9770] hover:underline">
-            View all
-          </Link>
-        </div>
-        <div className="border-t border-gray-100">
-          {items.slice(0, 8).map((scan) => (
-            <Link
-              key={scan.id}
-              to={`/scan/${scan.id}`}
-              className="flex items-center gap-4 py-4 border-b border-gray-100 hover:bg-gray-50/50 -mx-2 px-2 transition-colors group"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-[15px] font-sans font-medium text-[#464646] truncate group-hover:text-[#1c9770] transition-colors">
-                  {scan.filename}
-                </p>
-              </div>
-              <span className="text-sm font-sans text-gray-400 whitespace-nowrap shrink-0">
-                {formatDate(scan.createdAt)}
-              </span>
-              <RiskBadge level={scan.riskLevel} />
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      {/* High/Critical alert section */}
-      {items.some((s) => s.riskLevel === 'HIGH' || s.riskLevel === 'CRITICAL') && (
+      {/* Risk distribution + Recent scans — side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
+        {/* Risk distribution */}
         <div>
-          <p className="text-xs font-display font-bold text-[#dc2626] uppercase tracking-widest mb-6">
-            Requires Attention
+          <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-6">
+            Risk Distribution
           </p>
-          <div className="border-t border-gray-100">
-            {items
-              .filter((s) => s.riskLevel === 'HIGH' || s.riskLevel === 'CRITICAL')
-              .map((scan) => (
-                <div key={scan.id} className="flex items-center gap-4 py-4 border-b border-gray-100">
-                  <div className="flex-1 min-w-0">
-                    <Link
-                      to={`/scan/${scan.id}`}
-                      className="text-[15px] font-sans font-medium text-[#464646] hover:text-[#1c9770] transition-colors truncate block"
-                    >
-                      {scan.filename}
-                    </Link>
-                    <p className="text-sm text-gray-400 font-sans mt-0.5">
-                      {scan.vulnerableComponents} vulnerable · {formatDate(scan.createdAt)}
-                    </p>
+          <div className="space-y-4">
+            {(
+              [
+                { level: 'CRITICAL', color: 'bg-[#dc2626]', text: 'text-[#dc2626]' },
+                { level: 'HIGH', color: 'bg-[#464646]', text: 'text-[#464646]' },
+                { level: 'MEDIUM', color: 'bg-[#6b7280]', text: 'text-[#6b7280]' },
+                { level: 'LOW', color: 'bg-[#93cb52]', text: 'text-[#93cb52]' },
+              ] as const
+            ).map(({ level, color, text }) => {
+              const count = levelCounts[level]
+              const pct = items.length > 0 ? (count / items.length) * 100 : 0
+              return (
+                <div key={level} className="flex items-center gap-4">
+                  <span className={`w-20 text-sm font-display font-bold ${text}`}>{level}</span>
+                  <div className="flex-1 h-1.5 rounded-full bg-gray-100">
+                    <div
+                      className={`h-1.5 rounded-full ${color} transition-all`}
+                      style={{ width: `${pct}%` }}
+                    />
                   </div>
-                  <RiskBadge level={scan.riskLevel} />
+                  <span className="w-6 text-right text-sm font-sans text-gray-400">{count}</span>
                 </div>
-              ))}
+              )
+            })}
           </div>
         </div>
-      )}
+
+        {/* Recent scans */}
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
+              Recent Scans
+            </p>
+            <Link to="/history" className="text-sm font-sans text-[#1c9770] hover:underline">
+              View all
+            </Link>
+          </div>
+          <div className="border-t border-gray-100">
+            {items.slice(0, 6).map((scan) => (
+              <Link
+                key={scan.id}
+                to={`/scan/${scan.id}`}
+                className="flex items-center gap-3 py-3.5 border-b border-gray-100 hover:bg-gray-50/50 -mx-2 px-2 transition-colors group"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-sans font-medium text-[#464646] truncate group-hover:text-[#1c9770] transition-colors">
+                    {scan.filename}
+                  </p>
+                  <p className="text-xs font-sans text-gray-400 mt-0.5">{formatDate(scan.createdAt)}</p>
+                </div>
+                <RiskBadge level={scan.riskLevel} />
+              </Link>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

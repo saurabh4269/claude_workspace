@@ -9,8 +9,8 @@ interface RiskBadgeProps {
 export function RiskBadge({ level, className }: RiskBadgeProps) {
   const color = {
     LOW: 'text-[#93cb52]',
-    MEDIUM: 'text-[#f59e0b]',
-    HIGH: 'text-[#f97316]',
+    MEDIUM: 'text-[#6b7280]',
+    HIGH: 'text-[#464646]',
     CRITICAL: 'text-[#dc2626]',
   }[level?.toUpperCase()] ?? 'text-gray-400'
 

@@ -12,8 +12,8 @@ interface ComponentTableProps {
 function severityColor(severity: string): string {
   const s = severity?.toUpperCase()
   if (s === 'CRITICAL') return 'text-[#dc2626]'
-  if (s === 'HIGH') return 'text-[#f97316]'
-  if (s === 'MEDIUM') return 'text-[#f59e0b]'
+  if (s === 'HIGH') return 'text-[#464646]'
+  if (s === 'MEDIUM') return 'text-[#6b7280]'
   if (s === 'LOW') return 'text-[#93cb52]'
   return 'text-gray-400'
 }
@@ -40,13 +40,13 @@ function VulnExpandedRow({ vulns, colSpan }: { vulns: Vulnerability[]; colSpan: 
                 <tr key={v.id} className="border-t border-[#e5e7eb]">
                   <td className="px-3 py-2 font-mono text-[#464646]">{v.id}</td>
                   <td className={`px-3 py-2 font-semibold ${severityColor(v.severity)}`}>
-                    {v.severity || '—'}
+                    {v.severity || 'N/A'}
                   </td>
                   <td className="px-3 py-2 text-gray-500">
-                    {v.cvssScore > 0 ? v.cvssScore.toFixed(1) : '—'}
+                    {v.cvssScore > 0 ? v.cvssScore.toFixed(1) : 'N/A'}
                   </td>
                   <td className="px-3 py-2 text-gray-500">
-                    {v.epssScore != null ? `${(v.epssScore * 100).toFixed(2)}%` : '—'}
+                    {v.epssScore != null ? `${(v.epssScore * 100).toFixed(2)}%` : 'N/A'}
                   </td>
                   <td className="px-3 py-2">
                     {v.inKev ? (
@@ -58,7 +58,7 @@ function VulnExpandedRow({ vulns, colSpan }: { vulns: Vulnerability[]; colSpan: 
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono text-gray-500">
-                    {v.fixedVersion || <span className="text-gray-300">—</span>}
+                    {v.fixedVersion || <span className="text-gray-300">N/A</span>}
                   </td>
                   <td className="px-3 py-2 text-gray-500 max-w-[200px] truncate" title={v.summary}>
                     {v.summary || <span className="text-gray-300">No description</span>}
@@ -274,7 +274,7 @@ export function ComponentTable({ components }: ComponentTableProps) {
                       </div>
                     </td>
                     <td className={cn(tdClass, 'font-mono text-xs text-gray-500')}>
-                      {comp.version || <span className="text-gray-300">--</span>}
+                      {comp.version || <span className="text-gray-300">N/A</span>}
                     </td>
                     <td className={tdClass}>
                       {comp.componentType ? (
@@ -282,12 +282,12 @@ export function ComponentTable({ components }: ComponentTableProps) {
                           {comp.componentType}
                         </span>
                       ) : (
-                        <span className="text-gray-300">--</span>
+                        <span className="text-gray-300">N/A</span>
                       )}
                     </td>
                     <td className={cn(tdClass, 'max-w-[140px]')}>
                       <span className="truncate block" title={comp.supplier ?? ''}>
-                        {comp.supplier || <span className="text-gray-300">--</span>}
+                        {comp.supplier || <span className="text-gray-300">N/A</span>}
                       </span>
                     </td>
                     <td className={cn(tdClass, 'max-w-[160px]')}>
