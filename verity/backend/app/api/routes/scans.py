@@ -118,11 +118,11 @@ async def upload_scan(
 
     risk_report = analyze(doc, vuln_results=vuln_results)
 
-    # Quality scoring
+    # Quality scoring (pass vuln_results for Category 8 security health metrics)
     qs: Optional[QualityScore] = None
     qs_dict: Optional[dict] = None
     try:
-        qs = score(doc)
+        qs = score(doc, vuln_results=vuln_results if effective_vuln_check else None)
         qs_dict = quality_score_to_dict(qs)
     except Exception as exc:
         logger.warning("Quality scoring failed: %s", exc)

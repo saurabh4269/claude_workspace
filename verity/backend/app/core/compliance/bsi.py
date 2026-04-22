@@ -312,25 +312,42 @@ def _check_bsi_v21(doc: SBOMDocument) -> list[ComplianceRecord]:
             r.tier = RecordTier.REQUIRED
             break
 
-    # SHA-512 for deployable hash (new SHALL in v2.1)
+    # SHA-512 for deployable hash (new SHALL in v2.1, CDX 1.6 only)
     for comp in doc.components:
         cid = comp.name or "unknown"
-        # Check externalReferences for distribution type with SHA-512
         ext_refs = getattr(comp, "external_references", []) or []
+        # Only applicable when the component has at least one distribution-type external ref
+        has_dist_ref = any(
+            isinstance(ref, dict) and (ref.get("type") or "").lower() in ("distribution", "distribution-intake")
+            for ref in ext_refs
+        )
+        is_cdx16_comp = fmt == "cyclonedx" and version.startswith("1.6")
+        # applicable = CDX 1.6 AND component has a distribution reference
+        deploy_applicable = is_cdx16_comp and has_dist_ref
         has_deploy_hash = False
-        for ref in ext_refs:
-            if isinstance(ref, dict):
-                rtype = (ref.get("type") or "").lower()
-                if rtype in ("distribution", "distribution-intake"):
-                    hashes = ref.get("hashes", {})
-                    for algo in (hashes.keys() if isinstance(hashes, dict) else []):
-                        if "512" in algo:
-                            has_deploy_hash = True
-        records.append(_req("bsi_v21_deploy_hash", 10.0 if has_deploy_hash else 0.0,
-                            cid if (fmt == "cyclonedx" and version.startswith("1.6")) else "N/A",
-                            "SHA-512 in distribution ref" if has_deploy_hash else "not found",
-                            "SHA-512 hash on deployable artifact",
-                            "Deploy hash found" if has_deploy_hash else "No SHA-512 on distribution reference"))
+        if has_dist_ref:
+            for ref in ext_refs:
+                if isinstance(ref, dict):
+                    rtype = (ref.get("type") or "").lower()
+                    if rtype in ("distribution", "distribution-intake"):
+                        hashes = ref.get("hashes", {})
+                        for algo in (hashes.keys() if isinstance(hashes, dict) else []):
+                            if "512" in algo:
+                                has_deploy_hash = True
+        records.append(ComplianceRecord(
+            check_key="bsi_v21_deploy_hash",
+            tier=RecordTier.REQUIRED,
+            score=10.0 if has_deploy_hash else 0.0,
+            applicable=deploy_applicable,
+            subject_id=cid,
+            found_value="SHA-512 in distribution ref" if has_deploy_hash else ("no distribution ref" if not has_dist_ref else "not found"),
+            expected="SHA-512 hash on deployable artifact",
+            detail=(
+                "Deploy hash found" if has_deploy_hash
+                else ("No distribution-type external reference — check N/A" if not has_dist_ref
+                      else "Distribution ref present but no SHA-512 hash")
+            ),
+        ))
 
         # Original/declared license (promoted to SHALL in v2.1)
         declared = getattr(comp, "declared_licenses", None) or []

@@ -19,6 +19,32 @@ from app.core.compliance.record import (
 from app.core.scorer import _is_valid_purl, _is_valid_cpe, _has_strong_checksum, _has_source_url
 from app.core.licenses.spdx_db import is_valid_spdx, is_absent
 
+# External-reference types and value prefixes that constitute alternative unique IDs.
+# Based on: SoftWare Heritage persistent IDentifiers (SWHID), SWID ISO/IEC 19770-2,
+# and OmniBOR (formerly GitOID) public specifications.
+_SWHID_PREFIX = "swh:"
+_OMNIBOR_TYPES = frozenset({"omnibor", "gitoid"})
+_SWID_TYPES = frozenset({"swid"})
+
+
+def _has_alternative_unique_id(comp: "Component") -> bool:
+    """Return True if the component carries a SWHID, SWID, or OmniBOR identifier."""
+    ext_refs = getattr(comp, "external_references", []) or []
+    for ref in ext_refs:
+        if not isinstance(ref, dict):
+            continue
+        rtype = (ref.get("type") or ref.get("referenceType") or "").lower()
+        url = ref.get("url") or ref.get("locator") or ""
+        if rtype in _OMNIBOR_TYPES:
+            return True
+        if rtype in _SWID_TYPES:
+            return True
+        if url.startswith(_SWHID_PREFIX):
+            return True
+        if rtype == "vcs" and url.startswith(_SWHID_PREFIX):
+            return True
+    return False
+
 
 @dataclass
 class FSCTResult:
@@ -102,10 +128,19 @@ def check_fsct(doc: SBOMDocument) -> FSCTResult:
         records.append(_req("fsct_comp_supplier", 10.0 if has_supplier else 0.0,
                             cid, comp.supplier or "", "Supplier or 'unknown'", ""))
 
-        # Unique ID (PURL, CPE, or other)
-        has_id = _is_valid_purl(comp.purl or "") or _is_valid_cpe(comp.cpe or "")
+        # Unique ID: PURL, CPE, SWHID, SWID, or OmniBOR
+        has_purl = _is_valid_purl(comp.purl or "")
+        has_cpe = _is_valid_cpe(comp.cpe or "")
+        has_alt_id = _has_alternative_unique_id(comp)
+        has_id = has_purl or has_cpe or has_alt_id
+        id_found = (
+            comp.purl if has_purl
+            else comp.cpe if has_cpe
+            else "SWHID/SWID/OmniBOR" if has_alt_id
+            else ""
+        )
         records.append(_req("fsct_comp_uniq_id", 10.0 if has_id else 0.0,
-                            cid, comp.purl or comp.cpe or "", "PURL, CPE, SWHID, or SWID", ""))
+                            cid, id_found, "PURL, CPE, SWHID, SWID, or OmniBOR", ""))
 
         # Checksum: 0=none, 10=weak, 12=strong (cap at 10 for denominator)
         has_any_hash = bool(comp.hashes)

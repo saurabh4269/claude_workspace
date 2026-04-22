@@ -81,7 +81,7 @@ async def ci_scan(
     overall_score = None
     grade = None
     try:
-        qs = score(doc)
+        qs = score(doc, vuln_results=vuln_results if settings.VULN_CHECK_ENABLED else None)
         overall_score = qs.overall_score
         grade = qs.grade
     except Exception as exc:

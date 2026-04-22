@@ -328,6 +328,10 @@ def _parse_cyclonedx_json(data: dict) -> SBOMDocument:
 
     graph = _build_dependency_graph(edges, node_refs, primary_ref, is_complete)
 
+    # Lightweight structural validation: required fields per CycloneDX spec
+    _CDX_JSON_REQUIRED = {"bomFormat", "specVersion"}
+    schema_valid = _CDX_JSON_REQUIRED.issubset(data.keys())
+
     doc = SBOMDocument(
         format="cyclonedx",
         spec_version=spec_version or None,
@@ -345,6 +349,7 @@ def _parse_cyclonedx_json(data: dict) -> SBOMDocument:
         bom_links=bom_links,
         vulnerabilities=vulnerabilities,
         dependency_graph=graph.to_dict(),
+        schema_valid=schema_valid,
     )
     return doc
 
@@ -725,6 +730,10 @@ def _parse_spdx_json(data: dict) -> SBOMDocument:
     node_refs = list(spdx_id_map.keys())
     graph = _build_dependency_graph(edges, node_refs, primary_ref, False)
 
+    # Lightweight structural validation: required fields per SPDX 2.x JSON spec
+    _SPDX_JSON_REQUIRED = {"spdxVersion", "SPDXID", "name", "dataLicense", "documentNamespace"}
+    schema_valid = _SPDX_JSON_REQUIRED.issubset(data.keys())
+
     return SBOMDocument(
         format="spdx",
         spec_version=spec_version,
@@ -738,6 +747,7 @@ def _parse_spdx_json(data: dict) -> SBOMDocument:
         primary_component=primary_component,
         data_license=data_license,
         dependency_graph=graph.to_dict(),
+        schema_valid=schema_valid,
     )
 
 

@@ -207,10 +207,12 @@ def _score_structural(doc: SBOMDocument) -> CategoryResult:
     supported_spdx = {"2.2", "2.3", "2.2.1", "2.2.2", "2.3.1"}
 
     spec_detected = fmt in ("cyclonedx", "spdx")
+    # SPDX encodes version as "SPDX-2.3" — strip the prefix for comparison
+    norm_version = version.removeprefix("SPDX-") if fmt == "spdx" else version
     if fmt == "cyclonedx":
-        spec_version_ok = any(version.startswith(v) for v in supported_cdx)
+        spec_version_ok = any(norm_version.startswith(v) for v in supported_cdx)
     elif fmt == "spdx":
-        spec_version_ok = any(version.startswith(v) for v in supported_spdx)
+        spec_version_ok = any(norm_version.startswith(v) for v in supported_spdx)
     else:
         spec_version_ok = False
 
@@ -240,9 +242,14 @@ def _score_structural(doc: SBOMDocument) -> CategoryResult:
         FeatureResult(
             key="schema_valid",
             score=_boolean(getattr(doc, "schema_valid", True)),
-            applicable=True,
+            # JSON schema validation only applies to JSON serializations
+            applicable=getattr(doc, "file_format", "json") == "json",
             weight=0.20,
-            detail="JSON schema validation" + (" passed" if getattr(doc, "schema_valid", True) else " failed"),
+            detail=(
+                "JSON schema validation" + (" passed" if getattr(doc, "schema_valid", True) else " failed")
+                if getattr(doc, "file_format", "json") == "json"
+                else f"Schema validation N/A for {getattr(doc, 'file_format', 'unknown')} format"
+            ),
         ),
     ]
 
@@ -264,10 +271,11 @@ def _score_identity(doc: SBOMDocument) -> CategoryResult:
 
     if n == 0:
         features = [
-            FeatureResult("comp_has_name", 0.0, False, 0.30, "No components"),
-            FeatureResult("comp_has_version", 0.0, False, 0.30, "No components"),
-            FeatureResult("comp_has_purl", 0.0, False, 0.25, "No components"),
-            FeatureResult("comp_has_cpe", 0.0, False, 0.15, "No components"),
+            FeatureResult("comp_has_name", 0.0, False, 0.25, "No components"),
+            FeatureResult("comp_has_version", 0.0, False, 0.25, "No components"),
+            FeatureResult("comp_has_local_unique_id", 0.0, False, 0.20, "No components"),
+            FeatureResult("comp_has_purl", 0.0, False, 0.20, "No components"),
+            FeatureResult("comp_has_cpe", 0.0, False, 0.10, "No components"),
         ]
         return CategoryResult("Identity & Traceability", 15, 0.0, features)
 
@@ -276,33 +284,51 @@ def _score_identity(doc: SBOMDocument) -> CategoryResult:
     has_purl = sum(1 for c in comps if c.purl and c.purl.strip())
     has_cpe = sum(1 for c in comps if c.cpe and c.cpe.strip())
 
+    # Local unique ID: bom-ref (CycloneDX) or SPDXID (SPDX) — must be non-empty and unique
+    bom_refs = [c.bom_ref for c in comps if c.bom_ref and c.bom_ref.strip()]
+    unique_refs = set(bom_refs)
+    # Count components whose bom_ref is unique (not duplicated)
+    from collections import Counter
+    ref_counts = Counter(bom_refs)
+    has_unique_local_id = sum(
+        1 for c in comps
+        if c.bom_ref and c.bom_ref.strip() and ref_counts[c.bom_ref] == 1
+    )
+
     features = [
         FeatureResult(
             key="comp_has_name",
             score=_per_component(has_name, n),
             applicable=True,
-            weight=0.30,
+            weight=0.25,
             detail=f"{has_name}/{n} components have names",
         ),
         FeatureResult(
             key="comp_has_version",
             score=_per_component(has_version, n),
             applicable=True,
-            weight=0.30,
+            weight=0.25,
             detail=f"{has_version}/{n} components have versions",
+        ),
+        FeatureResult(
+            key="comp_has_local_unique_id",
+            score=_per_component(has_unique_local_id, n),
+            applicable=True,
+            weight=0.20,
+            detail=f"{has_unique_local_id}/{n} components have a unique bom-ref/SPDXID",
         ),
         FeatureResult(
             key="comp_has_purl",
             score=_per_component(has_purl, n),
             applicable=True,
-            weight=0.25,
+            weight=0.20,
             detail=f"{has_purl}/{n} components have a PURL",
         ),
         FeatureResult(
             key="comp_has_cpe",
             score=_per_component(has_cpe, n),
             applicable=True,
-            weight=0.15,
+            weight=0.10,
             detail=f"{has_cpe}/{n} components have a CPE",
         ),
     ]
@@ -692,7 +718,7 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
 
 
 def _has_source_url(comp: Component) -> bool:
-    """Check if a component has a VCS or source URL in external references."""
+    """VCS or source URL in external references."""
     ext_refs = getattr(comp, "external_references", []) or []
     for ref in ext_refs:
         if isinstance(ref, dict):
@@ -703,14 +729,107 @@ def _has_source_url(comp: Component) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Category 8: Component Security Health (weight 8, requires vuln_results)
+# Informational — only computed when vulnerability data is available.
+# ---------------------------------------------------------------------------
+
+def _score_security_health(doc: SBOMDocument, vuln_results: dict) -> CategoryResult:
+    """
+    Aggregate security health metrics across components.
+    Scoring is inverted: lower exposure → higher score (10 = 0% exposed).
+    """
+    comps = doc.components
+    n = len(comps)
+
+    if n == 0 or not vuln_results:
+        features = [
+            FeatureResult("sec_no_vulnerable_components", 0.0, False, 0.40, "No data"),
+            FeatureResult("sec_no_critical_cvss", 0.0, False, 0.30, "No data"),
+            FeatureResult("sec_no_high_epss", 0.0, False, 0.15, "No data"),
+            FeatureResult("sec_not_in_kev", 0.0, False, 0.15, "No data"),
+        ]
+        return CategoryResult("Component Security Health", 8, 0.0, features)
+
+    def _comp_key(comp: Component) -> str:
+        return comp.purl or comp.name or ""
+
+    vulnerable = 0
+    critical_cvss = 0
+    high_epss = 0
+    in_kev = 0
+
+    for comp in comps:
+        key = _comp_key(comp)
+        vulns = vuln_results.get(key, []) or []
+        if vulns:
+            vulnerable += 1
+            if any(float(v.get("cvss_score") or 0) >= 9.0 for v in vulns):
+                critical_cvss += 1
+            if any(float(v.get("epss_score") or 0) >= 0.5 for v in vulns):
+                high_epss += 1
+            if any(v.get("in_kev") for v in vulns):
+                in_kev += 1
+
+    def _inverted(count: int, total: int) -> float:
+        if total <= 0:
+            return 10.0
+        pct = count / total
+        return round(max(0.0, 10.0 * (1.0 - pct)), 2)
+
+    has_epss_data = any(
+        any(v.get("epss_score") is not None for v in (vuln_results.get(_comp_key(c)) or []))
+        for c in comps
+    )
+    has_kev_data = any(
+        any("in_kev" in v for v in (vuln_results.get(_comp_key(c)) or []))
+        for c in comps
+    )
+
+    features = [
+        FeatureResult(
+            key="sec_no_vulnerable_components",
+            score=_inverted(vulnerable, n),
+            applicable=True,
+            weight=0.40,
+            detail=f"{vulnerable}/{n} components have known CVEs",
+        ),
+        FeatureResult(
+            key="sec_no_critical_cvss",
+            score=_inverted(critical_cvss, n),
+            applicable=vulnerable > 0,
+            weight=0.30,
+            detail=f"{critical_cvss}/{n} components have CVSS >= 9.0 (Critical)",
+        ),
+        FeatureResult(
+            key="sec_no_high_epss",
+            score=_inverted(high_epss, n),
+            applicable=has_epss_data,
+            weight=0.15,
+            detail=f"{high_epss}/{n} components have EPSS >= 0.5",
+        ),
+        FeatureResult(
+            key="sec_not_in_kev",
+            score=_inverted(in_kev, n),
+            applicable=has_kev_data,
+            weight=0.15,
+            detail=f"{in_kev}/{n} components have CVEs in CISA KEV",
+        ),
+    ]
+
+    return CategoryResult("Component Security Health", 8, _category_score(features), features)
+
+
+# ---------------------------------------------------------------------------
 # Main score function
 # ---------------------------------------------------------------------------
 
-def score(doc: SBOMDocument) -> QualityScore:
+def score(doc: SBOMDocument, vuln_results: Optional[dict] = None) -> QualityScore:
     """
-    Compute the full 7-category quality score for an SBOMDocument.
+    Compute the quality score for an SBOMDocument.
 
     Returns a QualityScore with per-category breakdowns and an overall score + grade.
+    Categories 1–7 are structural quality metrics. Category 8 (Component Security
+    Health) is appended when vuln_results are provided.
     """
     categories = [
         _score_structural(doc),
@@ -721,6 +840,9 @@ def score(doc: SBOMDocument) -> QualityScore:
         _score_vuln_traceability(doc),
         _score_completeness(doc),
     ]
+
+    if vuln_results is not None:
+        categories.append(_score_security_health(doc, vuln_results))
 
     overall = _overall_score(categories)
     return QualityScore(

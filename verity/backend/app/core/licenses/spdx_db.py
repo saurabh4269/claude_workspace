@@ -383,9 +383,13 @@ def is_valid_spdx(license_id: str) -> bool:
     # DocumentRef-*/LicenseRef-* compound form
     if "LicenseRef-" in lid:
         return True
-    # Handle simple SPDX expressions: split on AND/OR/WITH, validate tokens
+    # Validate license ID tokens (WITH exception tokens validated separately)
     tokens = _tokenize_spdx_expression(lid)
-    return all(t in VALID_SPDX_IDS or t.startswith("LicenseRef-") for t in tokens)
+    if not all(t in VALID_SPDX_IDS or t.startswith("LicenseRef-") for t in tokens):
+        return False
+    # Validate exception IDs after WITH operators
+    exc_tokens = _extract_exception_tokens(lid)
+    return all(t in VALID_SPDX_EXCEPTIONS for t in exc_tokens)
 
 
 def is_deprecated(license_id: str) -> bool:
@@ -403,13 +407,98 @@ def is_restrictive(license_id: str) -> bool:
     return any(t in RESTRICTIVE_SPDX_IDS for t in tokens)
 
 
+# ---------------------------------------------------------------------------
+# SPDX license exception identifiers (used after WITH operator)
+# Source: https://spdx.org/licenses/exceptions-index.html (SPDX 3.23)
+# ---------------------------------------------------------------------------
+
+VALID_SPDX_EXCEPTIONS: frozenset[str] = frozenset({
+    "389-exception",
+    "Autoconf-exception-2.0",
+    "Autoconf-exception-3.0",
+    "Autoconf-exception-generic",
+    "Autoconf-exception-generic-3.0",
+    "Autoconf-exception-macros",
+    "Bison-exception-1.24",
+    "Bison-exception-2.2",
+    "Bootloader-exception",
+    "Classpath-exception-2.0",
+    "CLISP-exception-2.0",
+    "DigiRule-FOSS-exception",
+    "eCos-exception-2.0",
+    "Fawkes-Runtime-exception",
+    "FLTK-exception",
+    "fmt-exception",
+    "Font-exception-2.0",
+    "freertos-exception-2.0",
+    "GCC-exception-2.0",
+    "GCC-exception-3.1",
+    "GNOME-examples-exception",
+    "gnome-examples-exception",
+    "GNU-compiler-exception",
+    "i2p-gpl-java-exception",
+    "KiCad-libraries-exception",
+    "LGPL-3.0-linking-exception",
+    "LGPL-3.0-linking-source-exception",
+    "LLVM-exception",
+    "LZMA-exception",
+    "libtool-exception",
+    "Linux-syscall-note",
+    "mif-exception",
+    "Nokia-Qt-exception-1.1",
+    "OCCT-exception-1.0",
+    "OpenVPN-openssl-exception",
+    "PS-or-PDF-font-exception-20170817",
+    "QPL-1.0-INRIA-2004-exception",
+    "Qt-LGPL-exception-1.1",
+    "Qwt-exception-1.0",
+    "Swift-exception",
+    "u-boot-exception-2.0",
+    "Universal-FOSS-exception-1.0",
+    "wxWindows-exception-3.1",
+})
+
+
 def _tokenize_spdx_expression(expr: str) -> list[str]:
     """
     Split an SPDX expression into license ID tokens.
-    Removes operators AND, OR, WITH and parentheses.
+    Removes AND/OR operators and parentheses. Preserves exception IDs after
+    WITH by returning them separately so callers can validate in context.
+    Returns only license ID tokens (not exception tokens).
     """
     import re
-    # Remove parens, split on whitespace, drop operators
-    operators = {"AND", "OR", "WITH"}
-    tokens = re.split(r"[\s()]+", expr)
-    return [t for t in tokens if t and t not in operators]
+    parts = re.split(r"[\s()]+", expr)
+    # Walk parts: skip operators AND/OR; for WITH skip the next token (exception ID)
+    license_tokens: list[str] = []
+    skip_next = False
+    for part in parts:
+        if not part:
+            continue
+        if skip_next:
+            skip_next = False
+            continue
+        if part == "WITH":
+            skip_next = True
+            continue
+        if part in ("AND", "OR"):
+            continue
+        license_tokens.append(part)
+    return license_tokens
+
+
+def _extract_exception_tokens(expr: str) -> list[str]:
+    """Return the exception identifiers (tokens after WITH) from an SPDX expression."""
+    import re
+    parts = re.split(r"[\s()]+", expr)
+    exception_tokens: list[str] = []
+    capture_next = False
+    for part in parts:
+        if not part:
+            continue
+        if capture_next:
+            exception_tokens.append(part)
+            capture_next = False
+            continue
+        if part == "WITH":
+            capture_next = True
+    return exception_tokens

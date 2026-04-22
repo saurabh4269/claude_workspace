@@ -22,9 +22,9 @@ class TestNTIA:
         result = check_ntia(cdx_json_doc)
         assert result.overall_score > 0.0
 
-    def test_ntia_elements_are_7(self, cdx_json_doc):
+    def test_ntia_elements_are_9(self, cdx_json_doc):
         result = check_ntia(cdx_json_doc)
-        assert len(result.elements) == 7
+        assert len(result.elements) == 9
 
     def test_ntia_to_dict(self, cdx_json_doc):
         d = check_ntia(cdx_json_doc).to_dict()

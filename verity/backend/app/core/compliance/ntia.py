@@ -5,7 +5,7 @@ Based on: "The Minimum Elements For a Software Bill of Materials (SBOM)"
 US Department of Commerce / NTIA, July 2021.
 Public domain document, freely implementable.
 
-The seven element groups required by NTIA:
+The seven required element groups + two NTIA-recommended elements:
 1. Supplier Name (per component)
 2. Component Name (per component)
 3. Version of Component (per component)
@@ -13,6 +13,8 @@ The seven element groups required by NTIA:
 5. Dependency Relationships (document-level)
 6. Author of SBOM Data (document-level)
 7. Timestamp (document-level)
+8. SBOM Generation Tool (recommended — tool with name+version)
+9. Machine-readable Format (recommended — JSON or XML encoding)
 """
 
 from __future__ import annotations
@@ -219,6 +221,61 @@ def check_ntia(doc: SBOMDocument) -> NTIAResult:
             failing_components=no_id,
             detail=f"{len(comps) - len(no_id)}/{len(comps)} components have PURL or CPE",
         ))
+
+    # -----------------------------------------------------------------------
+    # Element 8: SBOM Generation Tool (recommended — tool with name+version)
+    # NTIA guidance: the authoring tool, along with its version, should be
+    # identified to allow consumers to understand how the SBOM was generated.
+    # -----------------------------------------------------------------------
+    tool_with_version = False
+    for t in (doc.tools or []):
+        if isinstance(t, dict):
+            has_tname = bool(t.get("name") or t.get("vendor"))
+            has_tver = bool(t.get("version"))
+            if has_tname and has_tver:
+                tool_with_version = True
+                break
+    tool_score = 10.0 if tool_with_version else 0.0
+    records.append(_req(
+        "sbom_generation_tool",
+        tool_score,
+        "document",
+        str(doc.tools or []),
+        "Tool with name and version",
+        "SBOM generation tool with version found" if tool_with_version else "No tool with version declared",
+    ))
+    elements.append(NTIAElementResult(
+        element_name="SBOM Generation Tool",
+        compliant=tool_with_version,
+        score=tool_score,
+        failing_components=[],
+        detail="Tool with name+version: " + ("present" if tool_with_version else "missing"),
+    ))
+
+    # -----------------------------------------------------------------------
+    # Element 9: Machine-readable Format (recommended)
+    # NTIA guidance: SBOM should be in a machine-readable format (JSON or XML)
+    # to enable automated processing. Tag-value (.spdx) is human-readable but
+    # not machine-parseable by the majority of consumer tooling.
+    # -----------------------------------------------------------------------
+    machine_readable = getattr(doc, "file_format", "json") in ("json", "xml")
+    mr_score = 10.0 if machine_readable else 0.0
+    file_fmt = getattr(doc, "file_format", "json")
+    records.append(_req(
+        "sbom_machine_readable_format",
+        mr_score,
+        "document",
+        file_fmt,
+        "JSON or XML encoding",
+        f"Machine-readable format ({file_fmt})" if machine_readable else f"Format '{file_fmt}' has limited machine-readability",
+    ))
+    elements.append(NTIAElementResult(
+        element_name="Machine-readable Format",
+        compliant=machine_readable,
+        score=mr_score,
+        failing_components=[],
+        detail=f"SBOM encoding: {file_fmt} ({'machine-readable' if machine_readable else 'limited machine-readability'})",
+    ))
 
     overall_score = compliance_score(records)
     overall_compliant = all(e.compliant for e in elements)
