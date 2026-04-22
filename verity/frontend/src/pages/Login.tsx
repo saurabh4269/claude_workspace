@@ -30,7 +30,9 @@ export default function Login() {
       navigate('/')
     },
     onError: (err: unknown) => {
-      setFormError(err instanceof Error ? err.message : 'Invalid email or password.')
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      const detail = axiosErr?.response?.data?.detail
+      setFormError(detail || 'Invalid email or password.')
     },
   })
 
@@ -43,7 +45,9 @@ export default function Login() {
       setPassword('')
     },
     onError: (err: unknown) => {
-      setFormError(err instanceof Error ? err.message : 'Registration failed. Please try again.')
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      const detail = axiosErr?.response?.data?.detail
+      setFormError(detail || 'Registration failed. Please try again.')
     },
   })
 
@@ -52,11 +56,10 @@ export default function Login() {
       navigate('/', { replace: true })
       return
     }
-    // Only redirect away if the health data is settled (not mid-refetch with stale data)
-    if (!healthFetching && healthData && !healthData.authEnabled) {
+    if (healthData && !healthData.authEnabled) {
       navigate('/', { replace: true })
     }
-  }, [healthData, healthFetching, navigate])
+  }, [healthData, navigate])
 
   const isLoading = loginMutation.isPending || registerMutation.isPending
 
@@ -73,8 +76,8 @@ export default function Login() {
     }
   }
 
-  // Show spinner while health check is in flight or while redirecting for auth-disabled deployments
-  if (healthLoading || healthFetching || (healthData && !healthData.authEnabled)) {
+  // Show spinner only during the initial health check, not background refetches
+  if (healthLoading || (healthData && !healthData.authEnabled)) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <Spinner size={28} />
