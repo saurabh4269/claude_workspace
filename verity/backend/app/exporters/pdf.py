@@ -232,6 +232,23 @@ def _build_quality_section(scan: dict) -> str:
             f'<td style="text-align:center;color:{_GRAY_LIGHT};">{weight}</td>'
             f'</tr>\n'
         )
+        for feat in (cat.get("features") or []):
+            if not feat.get("applicable", True):
+                continue
+            fkey = _esc(feat.get("key", ""))
+            fscore = float(feat.get("score", 0.0))
+            fdetail = _esc(feat.get("detail", ""))
+            icon = "✓" if fscore >= 10 else ("~" if fscore > 0 else "✗")
+            icon_color = "#93cb52" if fscore >= 10 else ("#6b7280" if fscore > 0 else "#dc2626")
+            cat_rows += (
+                f'<tr>'
+                f'<td style="padding-left:18px;font-size:0.8em;color:{_GRAY_LIGHT};">'
+                f'<span style="color:{icon_color};font-weight:700;">{icon}</span> '
+                f'<span style="font-family:monospace;">{fkey}</span>'
+                f'</td>'
+                f'<td style="font-size:0.8em;color:{_GRAY_LIGHT};" colspan="2">{fdetail}</td>'
+                f'</tr>\n'
+            )
 
     # Weakest categories for action items
     weak = sorted(
@@ -345,6 +362,37 @@ def _build_compliance_section(scan: dict) -> str:
             f'<td style="color:{_GRAY_LIGHT};">{detail}</td>'
             f'</tr>\n'
         )
+
+        # Per-check records for this standard (group unique checks; skip N/A)
+        records = [r for r in (std.get("records") or []) if r.get("applicable", True)]
+        if records:
+            # De-duplicate: for per-component checks show only the first failing instance
+            seen: set[str] = set()
+            for r in records:
+                ck = r.get("check_key", "")
+                rec_score = float(r.get("score", 0.0))
+                subject = _esc(r.get("subject_id", ""))
+                rec_detail = _esc(r.get("detail", ""))
+                tier = r.get("tier", "required")
+                tier_label = "SHALL" if tier == "required" else "SHOULD" if tier == "additional" else "MAY"
+                icon = "✓" if rec_score >= 10 else ("~" if rec_score >= 5 else "✗")
+                icon_color = "#93cb52" if rec_score >= 10 else ("#6b7280" if rec_score >= 5 else "#dc2626")
+                dedup_key = ck if rec_score >= 10 else f"{ck}::{subject}"
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                rows += (
+                    f'<tr>'
+                    f'<td style="padding-left:20px;font-size:0.82em;color:{_GRAY_LIGHT};">'
+                    f'<span style="color:{icon_color};font-weight:700;">{icon}</span> '
+                    f'<span style="font-family:monospace;">{_esc(ck)}</span>'
+                    f'{f" <em>({subject})</em>" if subject and subject != "document" else ""}'
+                    f'</td>'
+                    f'<td style="font-size:0.78em;color:{_GRAY_LIGHT};">{tier_label}</td>'
+                    f'<td></td>'
+                    f'<td style="font-size:0.82em;color:{_GRAY_LIGHT};">{rec_detail}</td>'
+                    f'</tr>\n'
+                )
 
     if not rows:
         return ""

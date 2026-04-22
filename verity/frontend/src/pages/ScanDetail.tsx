@@ -2,7 +2,7 @@ import React from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import * as Tabs from '@radix-ui/react-tabs'
-import { Download, ChevronLeft, Check, X as XIcon } from 'lucide-react'
+import { Download, ChevronLeft, ChevronRight, ChevronDown, Check, X as XIcon, Minus } from 'lucide-react'
 import { scans } from '@/lib/api'
 import { RiskBadge } from '@/components/RiskBadge'
 import { ComponentTable } from '@/components/ComponentTable'
@@ -10,7 +10,7 @@ import { CompliancePanel } from '@/components/CompliancePanel'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import type { QualityScore, NTIAResult } from '@/lib/api'
+import type { QualityScore, NTIAResult, FeatureResult } from '@/lib/api'
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -52,6 +52,74 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
+function FeatureRow({ f }: { f: FeatureResult }) {
+  if (!f.applicable) return null
+  const pass = f.score >= 10
+  const partial = f.score > 0 && f.score < 10
+  return (
+    <div className="flex items-start gap-2.5 py-2 border-b border-gray-50 last:border-b-0">
+      {pass
+        ? <Check size={12} strokeWidth={2.5} className="text-[#93cb52] mt-0.5 shrink-0" />
+        : partial
+          ? <Minus size={12} strokeWidth={2.5} className="text-[#6b7280] mt-0.5 shrink-0" />
+          : <XIcon size={12} strokeWidth={2.5} className="text-[#dc2626] mt-0.5 shrink-0" />
+      }
+      <div className="flex-1 min-w-0">
+        <span className="text-[12px] font-mono text-[#464646]">{f.key}</span>
+        {f.detail && <p className="text-[11px] text-gray-400 mt-0.5">{f.detail}</p>}
+      </div>
+      <span className={cn(
+        'text-[12px] font-display font-bold shrink-0',
+        pass ? 'text-[#93cb52]' : partial ? 'text-[#6b7280]' : 'text-[#dc2626]'
+      )}>
+        {f.score.toFixed(1)}
+      </span>
+    </div>
+  )
+}
+
+function CategoryRow({ cat }: { cat: { name: string; score: number; weight: number; features: FeatureResult[] } }) {
+  const [open, setOpen] = React.useState(false)
+  const pct = Math.min((cat.score / 10) * 100, 100)
+  const applicableFeatures = cat.features.filter(f => f.applicable)
+  return (
+    <div className="border-b border-gray-100 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => applicableFeatures.length > 0 && setOpen(o => !o)}
+        className={cn(
+          'w-full py-3 flex items-center gap-3 text-left',
+          applicableFeatures.length > 0 ? 'cursor-pointer' : 'cursor-default',
+        )}
+      >
+        {applicableFeatures.length > 0
+          ? open
+            ? <ChevronDown size={13} className="text-gray-400 shrink-0" />
+            : <ChevronRight size={13} className="text-gray-400 shrink-0" />
+          : <span className="w-[13px] shrink-0" />
+        }
+        <span className="text-[15px] font-sans text-[#464646] flex-1 text-left">{cat.name}</span>
+        <div className="w-28 shrink-0">
+          <div className="h-1 bg-gray-100 rounded-full">
+            <div
+              className={cn('h-1 rounded-full', scoreBarColor(cat.score))}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+        <span className="text-[15px] font-display font-bold text-[#464646] w-8 text-right shrink-0">
+          {cat.score.toFixed(1)}
+        </span>
+      </button>
+      {open && applicableFeatures.length > 0 && (
+        <div className="ml-5 mb-2 pl-3 border-l border-gray-100">
+          {applicableFeatures.map(f => <FeatureRow key={f.key} f={f} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function QualityBreakdown({ quality }: { quality: QualityScore }) {
   const { grade, overallScore, categories } = quality
   return (
@@ -66,24 +134,11 @@ function QualityBreakdown({ quality }: { quality: QualityScore }) {
           <span className="text-base text-gray-400 font-sans"> / 10</span>
         </div>
       </div>
+      <p className="text-[12px] text-gray-400 font-sans mb-4">Click a category to expand individual feature checks.</p>
       <div>
-        {categories.map((cat) => {
-          const pct = Math.min((cat.score / 10) * 100, 100)
-          return (
-            <div key={cat.name} className="py-3 border-b border-gray-100 last:border-b-0">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[15px] font-sans text-[#464646]">{cat.name}</span>
-                <span className="text-[15px] font-display font-bold text-[#464646]">{cat.score.toFixed(1)}</span>
-              </div>
-              <div className="h-1 bg-gray-100 rounded-full">
-                <div
-                  className={cn('h-1 rounded-full', scoreBarColor(cat.score))}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </div>
-          )
-        })}
+        {categories.map((cat) => (
+          <CategoryRow key={cat.name} cat={cat} />
+        ))}
       </div>
     </div>
   )

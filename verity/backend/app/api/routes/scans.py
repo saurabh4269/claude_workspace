@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scans", tags=["scans"])
 
-_ALLOWED_EXTENSIONS = {".json", ".xml", ".spdx", ".tv"}
+_ALLOWED_EXTENSIONS = {".json", ".xml", ".spdx", ".tv", ".yaml", ".yml"}
 
 
 # ---------------------------------------------------------------------------
@@ -153,10 +153,8 @@ async def upload_scan(
     # Dependency graph
     dep_graph_dict: Optional[dict] = None
     if doc.dependency_graph is not None:
-        try:
-            dep_graph_dict = doc.dependency_graph.to_dict()
-        except Exception as exc:
-            logger.warning("Dependency graph serialization failed: %s", exc)
+        # dependency_graph is already a dict (serialized by the parser)
+        dep_graph_dict = doc.dependency_graph if isinstance(doc.dependency_graph, dict) else None
 
     # Policy evaluation
     policy_result_dict: Optional[dict] = None
