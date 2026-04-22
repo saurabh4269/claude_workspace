@@ -10,7 +10,7 @@ import { CompliancePanel } from '@/components/CompliancePanel'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import type { QualityScore, NTIAResult, FeatureResult } from '@/lib/api'
+import type { QualityScore, NTIAResult, FeatureResult, PolicyResult, DependencyGraph } from '@/lib/api'
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -247,6 +247,115 @@ function TopComponentsList({ components }: { components: any[] }) {
   )
 }
 
+function DepGraphPanel({ graph }: { graph: DependencyGraph }) {
+  const orphanCount = graph.orphans?.length ?? 0
+  return (
+    <div>
+      <SectionLabel>Dependency Graph</SectionLabel>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
+        {[
+          { label: 'Components in Graph', value: graph.nodes?.length ?? 0 },
+          { label: 'Dependency Edges', value: graph.edges?.length ?? 0 },
+          { label: 'Max Depth', value: graph.maxDepth ?? 0 },
+          { label: 'Orphaned Components', value: orphanCount },
+          { label: 'Graph Complete', value: graph.isComplete ? 'Yes' : 'No' },
+          ...(graph.primaryComponentRef ? [{ label: 'Primary Component', value: graph.primaryComponentRef }] : []),
+        ].map(({ label, value }) => (
+          <div key={label} className="border border-gray-100 rounded-xl px-5 py-4">
+            <p className={cn(
+              'text-2xl font-display font-bold',
+              label === 'Graph Complete'
+                ? value === 'Yes' ? 'text-[#93cb52]' : 'text-[#6b7280]'
+                : label === 'Orphaned Components' && Number(value) > 0
+                  ? 'text-[#f59e0b]'
+                  : 'text-[#464646]',
+            )}>{value}</p>
+            <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mt-1">{label}</p>
+          </div>
+        ))}
+      </div>
+      {orphanCount > 0 && (
+        <div className="border border-[#f59e0b]/30 bg-amber-50 rounded-xl px-5 py-4">
+          <p className="text-sm font-sans font-semibold text-[#464646] mb-2">
+            {orphanCount} orphaned component{orphanCount !== 1 ? 's' : ''} (not connected to primary component)
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {graph.orphans.slice(0, 20).map((ref) => (
+              <span key={ref} className="font-mono text-xs bg-white border border-[#e5e7eb] rounded px-1.5 py-0.5 text-gray-500">
+                {ref}
+              </span>
+            ))}
+            {graph.orphans.length > 20 && (
+              <span className="text-xs text-gray-400 font-sans self-center">+{graph.orphans.length - 20} more</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PolicyPanel({ policy }: { policy: PolicyResult }) {
+  const triggered = policy.outcomes.filter(o => o.triggered)
+  const ok = policy.overall === 'PASS'
+  const warn = policy.overall === 'WARN'
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-6">
+        <span className="w-0.5 h-4 bg-[#1c9770] rounded-full" />
+        <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest flex-1">Policy Evaluation</p>
+        <span className={cn(
+          'text-sm font-display font-bold',
+          ok ? 'text-[#93cb52]' : warn ? 'text-[#f59e0b]' : 'text-[#dc2626]',
+        )}>
+          {policy.overall}
+        </span>
+      </div>
+      {triggered.length > 0 && (
+        <div className={cn(
+          'rounded-xl px-5 py-3 mb-4 text-sm font-sans',
+          ok ? 'bg-[#edfaf3] text-[#1c9770]' : warn ? 'bg-amber-50 text-[#464646]' : 'bg-[#f2eeee] text-[#dc2626]',
+        )}>
+          {triggered.length} rule{triggered.length !== 1 ? 's' : ''} triggered
+        </div>
+      )}
+      {policy.outcomes.length === 0 ? (
+        <p className="text-[15px] text-gray-400 font-sans">No policy rules configured.</p>
+      ) : (
+        <div className="border border-gray-100 rounded-xl overflow-hidden">
+          {policy.outcomes.map((outcome, i) => (
+            <div
+              key={outcome.ruleId}
+              className={cn(
+                'flex items-start gap-4 px-5 py-3.5 border-b border-gray-50 last:border-b-0',
+                i % 2 === 1 ? 'bg-gray-50/30' : 'bg-white',
+              )}
+            >
+              {outcome.triggered
+                ? <XIcon size={14} strokeWidth={2.5} className={cn('shrink-0 mt-0.5', outcome.action === 'block' ? 'text-[#dc2626]' : 'text-[#f59e0b]')} />
+                : <Check size={14} strokeWidth={2.5} className="text-[#93cb52] shrink-0 mt-0.5" />
+              }
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[13px] font-mono text-[#464646]">{outcome.ruleId}</span>
+                  <span className={cn(
+                    'inline-block rounded px-1.5 py-0.5 text-[10px] font-display font-bold uppercase tracking-wide',
+                    outcome.action === 'block' ? 'bg-[#f2eeee] text-[#dc2626]' : 'bg-amber-50 text-[#f59e0b]',
+                  )}>
+                    {outcome.action}
+                  </span>
+                </div>
+                <p className="text-[13px] font-sans text-[#464646] mt-0.5">{outcome.description}</p>
+                {outcome.detail && <p className="text-[12px] text-gray-400 mt-0.5">{outcome.detail}</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const TAB_TRIGGER_CLASS =
   'px-0 mr-8 py-3 text-[15px] font-display font-bold border-b-2 border-transparent transition-colors whitespace-nowrap data-[state=active]:border-[#1c9770] data-[state=active]:text-[#1c9770] text-gray-400 hover:text-[#464646]'
 
@@ -448,6 +557,11 @@ export default function ScanDetail() {
               Compliance
             </Tabs.Trigger>
           )}
+          {data.policyResult && (
+            <Tabs.Trigger value="policy" className={TAB_TRIGGER_CLASS}>
+              Policy
+            </Tabs.Trigger>
+          )}
           <Tabs.Trigger value="issues" className={TAB_TRIGGER_CLASS}>
             Issues
             {issueCount > 0 && (
@@ -485,6 +599,13 @@ export default function ScanDetail() {
             <SectionLabel>Top Risk Components</SectionLabel>
             <TopComponentsList components={topComponents} />
           </div>
+
+          {/* Dependency graph summary */}
+          {data.dependencyGraph && data.dependencyGraph.nodes.length > 0 && (
+            <div className="mt-12">
+              <DepGraphPanel graph={data.dependencyGraph} />
+            </div>
+          )}
         </Tabs.Content>
 
         {/* Components tab */}
@@ -496,6 +617,13 @@ export default function ScanDetail() {
         {data.compliance && (
           <Tabs.Content value="compliance" className="pt-8">
             <CompliancePanel compliance={data.compliance} />
+          </Tabs.Content>
+        )}
+
+        {/* Policy tab */}
+        {data.policyResult && (
+          <Tabs.Content value="policy" className="pt-8">
+            <PolicyPanel policy={data.policyResult} />
           </Tabs.Content>
         )}
 

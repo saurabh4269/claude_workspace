@@ -565,6 +565,116 @@ def _build_component_section(scan: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Dependency graph section
+# ---------------------------------------------------------------------------
+
+def _build_dep_graph_section(scan: dict) -> str:
+    dg = scan.get("dependency_graph") or {}
+    nodes = dg.get("nodes") or []
+    if not nodes:
+        return ""
+
+    edges = dg.get("edges") or []
+    orphans = dg.get("orphans") or []
+    is_complete = dg.get("is_complete", False)
+    max_depth = dg.get("max_depth", 0)
+    primary_ref = _esc(dg.get("primary_component_ref") or "")
+    orphan_count = len(orphans)
+
+    complete_label = _pass_label(is_complete)
+    orphan_note = ""
+    if orphan_count:
+        orphan_refs = ", ".join(_esc(o) for o in orphans[:10])
+        if orphan_count > 10:
+            orphan_refs += f" … +{orphan_count - 10} more"
+        orphan_note = (
+            f'<p style="margin-top:6px;font-size:0.85em;color:#f59e0b;">'
+            f'<strong>Orphaned components:</strong> {orphan_refs}</p>'
+        )
+
+    rows = (
+        f'<tr><td>Total nodes</td><td>{len(nodes)}</td></tr>\n'
+        f'<tr><td>Dependency edges</td><td>{len(edges)}</td></tr>\n'
+        f'<tr><td>Max depth</td><td>{max_depth}</td></tr>\n'
+        f'<tr><td>Orphaned components</td><td style="color:{"#f59e0b" if orphan_count else _GRAY_LIGHT};">'
+        f'{orphan_count}</td></tr>\n'
+        f'<tr><td>Graph complete</td><td>{complete_label}</td></tr>\n'
+    )
+    if primary_ref:
+        rows += f'<tr><td>Primary component</td><td style="font-family:monospace;font-size:0.9em;">{primary_ref}</td></tr>\n'
+
+    return f"""
+    {_section("Dependency Graph")}
+    <table style="max-width:480px;">
+      <tbody>{rows}</tbody>
+    </table>
+    {orphan_note}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Policy result section
+# ---------------------------------------------------------------------------
+
+def _build_policy_section(scan: dict) -> str:
+    policy = scan.get("policy_result") or {}
+    if not policy:
+        return ""
+
+    overall = str(policy.get("overall", "")).upper()
+    outcomes = policy.get("outcomes") or []
+    if not outcomes:
+        return ""
+
+    ok = overall == "PASS"
+    warn = overall == "WARN"
+    overall_color = "#93cb52" if ok else ("#f59e0b" if warn else "#dc2626")
+    triggered = [o for o in outcomes if o.get("triggered")]
+
+    rows = ""
+    for o in outcomes:
+        rule_id = _esc(o.get("rule_id", ""))
+        desc = _esc(o.get("description", ""))
+        action = _esc(o.get("action", ""))
+        detail = _esc(o.get("detail", ""))
+        is_triggered = o.get("triggered", False)
+        icon = "✗" if is_triggered else "✓"
+        action_color = "#dc2626" if action == "block" else "#f59e0b"
+        icon_color = action_color if is_triggered else "#93cb52"
+        rows += (
+            f'<tr>'
+            f'<td style="font-family:monospace;font-size:0.85em;">{rule_id}</td>'
+            f'<td><span style="color:{icon_color};font-weight:700;">{icon}</span></td>'
+            f'<td style="font-size:0.88em;">{desc}</td>'
+            f'<td style="font-size:0.82em;color:{action_color};font-weight:600;">{action.upper()}</td>'
+            f'<td style="font-size:0.82em;color:{_GRAY_LIGHT};">{detail}</td>'
+            f'</tr>\n'
+        )
+
+    summary = f'{len(triggered)} rule{"s" if len(triggered) != 1 else ""} triggered' if triggered else 'No rules triggered'
+
+    return f"""
+    {_section(f"Policy Evaluation: {overall}")}
+    <div style="display:inline-block;margin-bottom:10px;padding:5px 14px;border-radius:6px;background:{_TEAL_LIGHT};">
+      <span style="font-weight:700;color:{overall_color};font-size:1.05em;">{_esc(overall)}</span>
+      <span style="color:{_GRAY_LIGHT};font-size:0.88em;margin-left:10px;">{_esc(summary)}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:130px;">Rule ID</th>
+          <th style="width:50px;">Status</th>
+          <th>Description</th>
+          <th style="width:70px;">Action</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </table>
+"""
+
+
+# ---------------------------------------------------------------------------
 # Validation issues section
 # ---------------------------------------------------------------------------
 
@@ -623,6 +733,8 @@ def _build_html(scan: dict) -> str:
     compliance_section = _build_compliance_section(scan)
     vuln_section = _build_vulnerability_section(scan)
     component_section = _build_component_section(scan)
+    dep_graph_section = _build_dep_graph_section(scan)
+    policy_section = _build_policy_section(scan)
     issues_section = _build_issues_section(scan)
 
     return f"""<!DOCTYPE html>
@@ -784,6 +896,8 @@ def _build_html(scan: dict) -> str:
 {compliance_section}
 {vuln_section}
 {component_section}
+{dep_graph_section}
+{policy_section}
 {issues_section}
 </div>
 </body>

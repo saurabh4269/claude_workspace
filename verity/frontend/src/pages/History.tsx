@@ -3,13 +3,14 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Select from '@radix-ui/react-select'
-import { ChevronDown, Check, ExternalLink, Trash2, X, AlertTriangle } from 'lucide-react'
-import { scans, workspaces, type ScanSummary } from '@/lib/api'
+import { ChevronDown, Check, ExternalLink, Trash2, X, AlertTriangle, GitCompare } from 'lucide-react'
+import { scans, workspaces, type ScanSummary, type ScanDiff } from '@/lib/api'
 import { RiskBadge } from '@/components/RiskBadge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDate } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 
 const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
 const PER_PAGE = 20
@@ -77,6 +78,162 @@ function DeleteDialog({
   )
 }
 
+function DiffResultView({ diff }: { diff: ScanDiff }) {
+  const delta = diff.scoreDelta
+  const deltaColor = delta > 0 ? 'text-[#dc2626]' : delta < 0 ? 'text-[#93cb52]' : 'text-gray-400'
+  const deltaText = delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)
+
+  const Section = ({ title, items, color }: { title: string; items: Record<string, unknown>[]; color: string }) => {
+    if (!items.length) return null
+    return (
+      <div className="mb-4">
+        <p className="text-xs font-display font-bold uppercase tracking-widest mb-2" style={{ color }}>{title} ({items.length})</p>
+        <div className="border border-gray-100 rounded-lg overflow-hidden">
+          {items.map((item, i) => {
+            const name = String(item.name ?? item.component ?? '')
+            const version = item.version != null ? String(item.version) : null
+            const oldV = item.old != null ? String(item.old) : null
+            const newV = item.new != null ? String(item.new) : null
+            const id = item.id != null ? String(item.id) : null
+            return (
+              <div key={i} className="flex items-center gap-3 px-4 py-2 border-b border-gray-50 last:border-b-0 text-sm font-sans">
+                <span className="font-medium text-[#464646]">{name}</span>
+                {version && <span className="text-gray-400 font-mono text-xs">{version}</span>}
+                {oldV && newV && (
+                  <span className="text-gray-400 text-xs">
+                    <span className="line-through">{oldV}</span>
+                    {' → '}
+                    <span className="font-semibold text-[#464646]">{newV}</span>
+                  </span>
+                )}
+                {id && <span className="font-mono text-xs text-gray-400">{id}</span>}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-4 mb-5 p-4 bg-gray-50 rounded-xl">
+        <div>
+          <p className="text-xs text-gray-400 font-sans mb-0.5">Risk Score Δ</p>
+          <p className={cn('text-xl font-display font-bold', deltaColor)}>{deltaText}</p>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-sans text-gray-400 truncate">{diff.filenameA}</p>
+          <p className="text-xs text-gray-300 font-sans">vs</p>
+          <p className="text-sm font-sans text-gray-400 truncate">{diff.filenameB}</p>
+        </div>
+      </div>
+      <Section title="Added" items={diff.added} color="#1c9770" />
+      <Section title="Removed" items={diff.removed} color="#dc2626" />
+      <Section title="Version Changed" items={diff.versionChanged} color="#6b7280" />
+      <Section title="New Vulnerabilities" items={diff.newVulnerabilities} color="#dc2626" />
+      <Section title="Resolved Vulnerabilities" items={diff.resolvedVulnerabilities} color="#1c9770" />
+      {!diff.added.length && !diff.removed.length && !diff.versionChanged.length &&
+        !diff.newVulnerabilities.length && !diff.resolvedVulnerabilities.length && (
+        <p className="text-sm text-gray-400 font-sans text-center py-4">No differences found between the two scans.</p>
+      )}
+    </div>
+  )
+}
+
+function DiffDialog({
+  open, onOpenChange, items,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  items: ScanSummary[]
+}) {
+  const [idA, setIdA] = useState('')
+  const [idB, setIdB] = useState('')
+  const [diffResult, setDiffResult] = useState<ScanDiff | null>(null)
+  const [comparing, setComparing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleCompare = async () => {
+    if (!idA || !idB || idA === idB) return
+    setComparing(true)
+    setError(null)
+    setDiffResult(null)
+    try {
+      const result = await scans.diff(idA, idB)
+      setDiffResult(result)
+    } catch {
+      setError('Failed to compare scans.')
+    } finally {
+      setComparing(false)
+    }
+  }
+
+  const handleOpenChange = (v: boolean) => {
+    if (!v) { setIdA(''); setIdB(''); setDiffResult(null); setError(null) }
+    onOpenChange(v)
+  }
+
+  const selectClass = "flex h-10 min-w-0 w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-3 text-sm font-sans text-[#464646] focus:outline-none focus:ring-2 focus:ring-[#1c9770] data-[placeholder]:text-gray-400"
+  const itemClass = "flex cursor-pointer items-center rounded-md px-3 py-2 text-sm font-sans text-[#464646] hover:bg-gray-50 focus:outline-none focus:bg-gray-50"
+
+  const SelectScan = ({ value, onChange, exclude }: { value: string; onChange: (v: string) => void; exclude: string }) => (
+    <Select.Root value={value} onValueChange={onChange}>
+      <Select.Trigger className={selectClass}>
+        <Select.Value placeholder="Select a scan…" />
+        <Select.Icon><ChevronDown size={14} className="text-gray-400" /></Select.Icon>
+      </Select.Trigger>
+      <Select.Portal>
+        <Select.Content className="z-50 overflow-hidden rounded-lg border border-[#e5e7eb] bg-white shadow-lg max-h-60 overflow-y-auto">
+          <Select.Viewport className="p-1">
+            {items.filter(s => s.id !== exclude).map(s => (
+              <Select.Item key={s.id} value={s.id} className={itemClass}>
+                <Select.ItemText>{s.filename}</Select.ItemText>
+                <Select.ItemIndicator className="ml-auto"><Check size={13} className="text-[#1c9770]" /></Select.ItemIndicator>
+              </Select.Item>
+            ))}
+          </Select.Viewport>
+        </Select.Content>
+      </Select.Portal>
+    </Select.Root>
+  )
+
+  return (
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 bg-black/30 z-40 animate-in fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl border border-[#e5e7eb] animate-in fade-in-0 zoom-in-95">
+          <div className="flex items-center gap-3 mb-5">
+            <GitCompare size={18} className="text-[#1c9770]" />
+            <Dialog.Title className="font-display font-bold text-lg text-[#464646]">Compare Scans</Dialog.Title>
+          </div>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Scan A (baseline)</label>
+              <SelectScan value={idA} onChange={setIdA} exclude={idB} />
+            </div>
+            <div>
+              <label className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Scan B (comparison)</label>
+              <SelectScan value={idB} onChange={setIdB} exclude={idA} />
+            </div>
+          </div>
+          {error && <p className="text-sm text-[#dc2626] font-sans mb-3">{error}</p>}
+          <Button onClick={handleCompare} disabled={!idA || !idB || idA === idB || comparing} className="w-full">
+            {comparing ? <Spinner size={14} className="text-white" /> : <GitCompare size={14} />}
+            Compare
+          </Button>
+          {diffResult && <DiffResultView diff={diffResult} />}
+          <Dialog.Close asChild>
+            <button className="absolute right-4 top-4 text-gray-400 hover:text-[#464646] transition-colors" aria-label="Close">
+              <X size={16} />
+            </button>
+          </Dialog.Close>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
 export default function History() {
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
@@ -86,6 +243,7 @@ export default function History() {
   const [dateTo, setDateTo] = useState('')
   const [workspaceId, setWorkspaceId] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ScanSummary | null>(null)
+  const [diffOpen, setDiffOpen] = useState(false)
 
   const { data: workspaceList } = useQuery({
     queryKey: ['workspaces'],
@@ -140,11 +298,19 @@ export default function History() {
 
   return (
     <div className="p-10 space-y-8">
-      <div>
-        <h1 className="font-display font-bold text-2xl text-[#464646]">History</h1>
-        <p className="mt-1 text-[15px] text-gray-400 font-sans">
-          Browse and manage all previous scans.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display font-bold text-2xl text-[#464646]">History</h1>
+          <p className="mt-1 text-[15px] text-gray-400 font-sans">
+            Browse and manage all previous scans.
+          </p>
+        </div>
+        {(data?.items?.length ?? 0) >= 2 && (
+          <Button variant="ghost" size="sm" onClick={() => setDiffOpen(true)} className="shrink-0 mt-1">
+            <GitCompare size={14} />
+            Compare
+          </Button>
+        )}
       </div>
 
       {/* History disabled banner */}
@@ -466,6 +632,13 @@ export default function History() {
           )}
         </>
       )}
+
+      {/* SBOM diff dialog */}
+      <DiffDialog
+        open={diffOpen}
+        onOpenChange={setDiffOpen}
+        items={data?.items ?? []}
+      />
 
       {/* Delete confirmation dialog */}
       <DeleteDialog
