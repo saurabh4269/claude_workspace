@@ -92,6 +92,12 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
     for comp in doc.components:
         cid = comp.name or "unknown"
 
+        # SPDXID must be present and follow SPDXRef- convention
+        spdx_id = getattr(comp, "bom_ref", None) or ""
+        has_spdx_id = bool(spdx_id) and spdx_id.startswith("SPDXRef-")
+        records.append(_req("oct_pkg_spdxid", 10.0 if has_spdx_id else 0.0,
+                            cid, spdx_id, "SPDXRef-* identifier", ""))
+
         records.append(_req("oct_pkg_name", 10.0 if (comp.name and comp.name.strip()) else 0.0,
                             cid, comp.name or "", "Package name", ""))
 
@@ -154,6 +160,13 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
         has_purl = bool(comp.purl and comp.purl.strip())
         records.append(_req("oct_pkg_external_ref_purl", 10.0 if has_purl else 0.0,
                             cid, comp.purl or "", "PURL in external references", ""))
+
+        # FilesAnalyzed: must be explicitly declared (True or False)
+        files_analyzed = getattr(comp, "files_analyzed", None)
+        has_fa = files_analyzed is not None
+        records.append(_req("oct_pkg_files_analyzed", 10.0 if has_fa else 0.0,
+                            cid, str(files_analyzed) if has_fa else "",
+                            "FilesAnalyzed declared (true or false)", ""))
 
     overall = compliance_score(records)
     return OCTResult(overall_score=overall, spdx_only_fail=False, records=records)

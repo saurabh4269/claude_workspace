@@ -22,6 +22,12 @@ from app.core.licenses.spdx_db import is_valid_spdx, is_absent
 from app.core.scorer import _is_valid_purl, _is_valid_cpe, _has_strong_checksum
 
 
+def _bsi_version(doc: SBOMDocument) -> str:
+    """Normalise spec version: strips 'SPDX-' prefix so '2.3' compares correctly."""
+    v = doc.spec_version or ""
+    return v.removeprefix("SPDX-") if (doc.format or "").lower() == "spdx" else v
+
+
 @dataclass
 class BSIResult:
     version: str
@@ -118,7 +124,7 @@ def _dep_resolution_ok(doc: SBOMDocument) -> tuple[float, str]:
 def _check_bsi_v11(doc: SBOMDocument) -> list[ComplianceRecord]:
     records: list[ComplianceRecord] = []
     fmt = (doc.format or "").lower()
-    version = doc.spec_version or ""
+    version = _bsi_version(doc)
 
     # Spec version: CDX >= 1.4, SPDX >= 2.3
     if fmt == "cyclonedx":
@@ -211,7 +217,7 @@ def _check_bsi_v11(doc: SBOMDocument) -> list[ComplianceRecord]:
 def _check_bsi_v20(doc: SBOMDocument) -> list[ComplianceRecord]:
     records = _check_bsi_v11(doc)
     fmt = (doc.format or "").lower()
-    version = doc.spec_version or ""
+    version = _bsi_version(doc)
 
     # Override spec version check for v2.0 minimums
     for r in records:
@@ -264,7 +270,8 @@ def _check_bsi_v20(doc: SBOMDocument) -> list[ComplianceRecord]:
                         else "Signature present but no key material" if sig_score == 5.0
                         else "No document signature"))
 
-    # Per-component: filename (SHALL in v2.0)
+    # Per-component: filename (SHALL in v2.0) + type properties (MAY in v2.0)
+    _BSI_TYPE_PROPS = ("bsi:component:executable", "bsi:component:archive", "bsi:component:structured")
     for comp in doc.components:
         cid = comp.name or "unknown"
         props = getattr(comp, "properties", {}) or {}
@@ -272,6 +279,13 @@ def _check_bsi_v20(doc: SBOMDocument) -> list[ComplianceRecord]:
         records.append(_req("bsi_comp_filename", 10.0 if filename else 0.0, cid,
                             filename or "", "Component filename",
                             "Filename found" if filename else "No filename"))
+
+        # BSI-specific component type property (MAY — at least one of the three)
+        has_type_prop = any(props.get(p) for p in _BSI_TYPE_PROPS)
+        found_type = next((f"{p}={props[p]}" for p in _BSI_TYPE_PROPS if props.get(p)), "")
+        records.append(_opt("bsi_comp_type_property", 10.0 if has_type_prop else 0.0, cid,
+                            found_type, "bsi:component:executable/archive/structured property",
+                            "Component type property found" if has_type_prop else "No BSI component type property"))
 
     return records
 
@@ -283,7 +297,7 @@ def _check_bsi_v20(doc: SBOMDocument) -> list[ComplianceRecord]:
 def _check_bsi_v21(doc: SBOMDocument) -> list[ComplianceRecord]:
     records = _check_bsi_v20(doc)
     fmt = (doc.format or "").lower()
-    version = doc.spec_version or ""
+    version = _bsi_version(doc)
 
     # Override spec version: CDX >= 1.6, SPDX >= 3.0.1
     for r in records:
@@ -364,8 +378,41 @@ def _check_bsi_v21(doc: SBOMDocument) -> list[ComplianceRecord]:
             detail="Declared license found" if has_declared else "No declared license (CDX 1.6 acknowledgement=declared required)",
         ))
 
-    # Demote signature to SHOULD (was SHOULD in v2.0 already, confirm)
-    # (no change needed — already ADDITIONAL)
+    # BSI v2.1 MAY: effective license per component (bsi:component:effectiveLicense property)
+    for comp in doc.components:
+        cid = comp.name or "unknown"
+        props = getattr(comp, "properties", {}) or {}
+        effective_lic = props.get("bsi:component:effectiveLicense") or ""
+        is_cdx16_here = fmt == "cyclonedx" and version.startswith("1.6")
+        records.append(_opt(
+            "bsi_v21_effective_license",
+            10.0 if (effective_lic and not is_absent(effective_lic)) else 0.0,
+            cid,
+            effective_lic or "",
+            "bsi:component:effectiveLicense property",
+            "Effective license declared" if effective_lic else "No effective license property",
+        ))
+
+    # BSI v2.1 MAY: security.txt URL (externalReference type=rfc-9116, CDX 1.6 only)
+    security_txt_found = False
+    ext_docs = getattr(doc, "metadata", {}) or {}
+    for comp in doc.components:
+        ext_refs = getattr(comp, "external_references", []) or []
+        for ref in ext_refs:
+            if isinstance(ref, dict) and (ref.get("type") or "").lower() in ("rfc-9116", "security-contact"):
+                security_txt_found = True
+    # Also check document-level external references if stored in metadata
+    for ref in (doc.metadata or {}).get("externalReferences") or []:
+        if isinstance(ref, dict) and (ref.get("type") or "").lower() in ("rfc-9116", "security-contact"):
+            security_txt_found = True
+    records.append(_opt(
+        "bsi_v21_security_txt",
+        10.0 if security_txt_found else 0.0,
+        "document",
+        "present" if security_txt_found else "absent",
+        "External reference of type rfc-9116 (security.txt)",
+        "security.txt URL found" if security_txt_found else "No security.txt external reference",
+    ))
 
     return records
 

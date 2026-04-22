@@ -84,26 +84,30 @@ def check_fsct(doc: SBOMDocument) -> FSCTResult:
     records.append(_req("fsct_sbom_timestamp", 10.0 if has_ts else 0.0, "document",
                         doc.created or "", "RFC3339 timestamp", ""))
 
-    # Type/lifecycle (0=none, 15=aspirational)
-    has_lifecycle = bool(getattr(doc, "lifecycles", None))
-    records.append(_add("fsct_sbom_type", 10.0 if has_lifecycle else 0.0, True, "document",
-                        str(getattr(doc, "lifecycles", [])), "Lifecycle phase declared",
-                        "Lifecycle declared" if has_lifecycle else "No lifecycle declared"))
+    # Type/lifecycle: 0=none, 10=one lifecycle, 15=multiple (aspirational)
+    lifecycles = getattr(doc, "lifecycles", None) or []
+    has_lifecycle = bool(lifecycles)
+    lifecycle_score = 15.0 if len(lifecycles) > 1 else (10.0 if has_lifecycle else 0.0)
+    records.append(_add("fsct_sbom_type", lifecycle_score, True, "document",
+                        str(lifecycles), "Lifecycle phase declared",
+                        f"Multiple lifecycles (aspirational): {lifecycles}" if lifecycle_score == 15.0
+                        else f"Lifecycle declared: {lifecycles}" if has_lifecycle
+                        else "No lifecycle declared"))
 
     # Primary component
     has_primary = bool(getattr(doc, "primary_component", None))
     records.append(_req("fsct_sbom_primary", 10.0 if has_primary else 0.0, "document",
                         str(getattr(doc, "primary_component", "")), "Primary component identified", ""))
 
-    # Relationships (10=present, 12=complete)
+    # Relationships: 0=none, 10=partial, 12=complete (recommended)
     graph = getattr(doc, "dependency_graph", None) or {}
     has_rels = bool(graph.get("edges"))
     is_complete = graph.get("is_complete", False)
-    rel_score = 10.0 if has_rels else 0.0
+    rel_score = 12.0 if is_complete else (10.0 if has_rels else 0.0)
     records.append(_req("fsct_sbom_relationships", rel_score, "document",
                         f"{len(graph.get('edges', []))} edges",
                         "At least one dependency relationship",
-                        "Complete dependency graph" if is_complete
+                        "Complete dependency graph (recommended)" if is_complete
                         else "Partial dependencies" if has_rels
                         else "No relationships declared"))
 

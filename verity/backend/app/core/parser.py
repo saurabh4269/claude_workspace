@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
+import yaml
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -26,6 +27,7 @@ class Component:
     purl: Optional[str] = None
     cpe: Optional[str] = None
     supplier: Optional[str] = None
+    manufacturer: Optional[str] = None   # CDX manufacturer / SPDX PackageOriginator fallback
     licenses: list[str] = field(default_factory=list)
     declared_licenses: list[str] = field(default_factory=list)   # upstream-declared
     hashes: dict[str, str] = field(default_factory=dict)
@@ -37,6 +39,8 @@ class Component:
     download_location: Optional[str] = None
     # bom-ref / SPDXID used for dependency graph edge resolution
     bom_ref: Optional[str] = None
+    # SPDX-specific: FilesAnalyzed (True by default per spec)
+    files_analyzed: Optional[bool] = None
     raw: dict = field(default_factory=dict)
 
 
@@ -81,6 +85,7 @@ class SBOMDocument:
     data_license: Optional[str] = None
     vulnerabilities: list[dict] = field(default_factory=list)
     dependency_graph: Optional[dict] = None      # serialized DependencyGraph
+    compositions: list[dict] = field(default_factory=list)   # CDX compositions entries
     schema_valid: bool = True
     file_format: str = "json"
 
@@ -113,6 +118,8 @@ def parse(content: str, filename: str = "") -> SBOMDocument:
         file_format = "xml"
     elif lower_name.endswith((".spdx", ".tv")):
         file_format = "tv"
+    elif lower_name.endswith((".yaml", ".yml")):
+        file_format = "yaml"
 
     # --- JSON ---
     if stripped.startswith(("{", "[")):
@@ -170,8 +177,31 @@ def parse(content: str, filename: str = "") -> SBOMDocument:
         doc.file_format = "tv"
         return doc
 
+    # --- YAML (SPDX YAML format) ---
+    if lower_name.endswith((".yaml", ".yml")):
+        try:
+            data = yaml.safe_load(content)
+        except yaml.YAMLError as exc:
+            raise ParseError(f"Invalid YAML: {exc}") from exc
+        if isinstance(data, dict) and "spdxVersion" in data:
+            doc = _parse_spdx_json(data)
+            doc.file_format = "yaml"
+            return doc
+        raise ParseError("YAML SBOM must contain 'spdxVersion' — only SPDX YAML is supported")
+
+    # Content-sniff YAML: try if content looks like YAML key-value pairs
+    if "spdxVersion:" in stripped:
+        try:
+            data = yaml.safe_load(content)
+            if isinstance(data, dict) and "spdxVersion" in data:
+                doc = _parse_spdx_json(data)
+                doc.file_format = "yaml"
+                return doc
+        except yaml.YAMLError:
+            pass
+
     raise ParseError(
-        "Unsupported SBOM format. Supported: CycloneDX JSON/XML, SPDX JSON/tag-value."
+        "Unsupported SBOM format. Supported: CycloneDX JSON/XML, SPDX JSON/YAML/tag-value."
     )
 
 
@@ -293,6 +323,16 @@ def _parse_cyclonedx_json(data: dict) -> SBOMDocument:
             if url:
                 bom_links.append(url)
 
+    # Data license (CDX metadata.licenses — the SBOM's own license, not component licenses)
+    cdx_data_license = None
+    for lic_entry in metadata_raw.get("licenses") or []:
+        if isinstance(lic_entry, dict):
+            inner = lic_entry.get("license") or lic_entry
+            lid = inner.get("id") or inner.get("name") or lic_entry.get("expression") or ""
+            if lid:
+                cdx_data_license = lid
+                break
+
     # Vulnerabilities (CDX 1.4+)
     vulnerabilities = data.get("vulnerabilities") or []
 
@@ -349,7 +389,9 @@ def _parse_cyclonedx_json(data: dict) -> SBOMDocument:
         bom_links=bom_links,
         vulnerabilities=vulnerabilities,
         dependency_graph=graph.to_dict(),
+        compositions=data.get("compositions") or [],
         schema_valid=schema_valid,
+        data_license=cdx_data_license,
     )
     return doc
 
@@ -376,6 +418,14 @@ def _parse_cyclonedx_component(raw: dict, spec_version: str = "") -> Optional[Co
         supplier = supplier_raw.get("name") or None
     elif isinstance(supplier_raw, str):
         supplier = supplier_raw or None
+
+    # Manufacturer (CDX — fallback when supplier absent)
+    manufacturer = None
+    mfr_raw = raw.get("manufacturer")
+    if isinstance(mfr_raw, dict):
+        manufacturer = mfr_raw.get("name") or None
+    elif isinstance(mfr_raw, str):
+        manufacturer = mfr_raw or None
 
     # Licenses (concluded) + declared (CDX 1.6 acknowledgement field)
     licenses: list[str] = []
@@ -435,6 +485,7 @@ def _parse_cyclonedx_component(raw: dict, spec_version: str = "") -> Optional[Co
         purl=purl,
         cpe=cpe,
         supplier=supplier,
+        manufacturer=manufacturer,
         licenses=licenses,
         declared_licenses=declared_licenses,
         hashes=hashes,
@@ -593,6 +644,11 @@ def _parse_cyclonedx_xml_component(el: ET.Element, ns_prefix: str) -> Optional[C
     if supplier_el is not None:
         supplier = _get_text(supplier_el, "name", ns_prefix)
 
+    manufacturer = None
+    mfr_el = el.find(f"{ns_prefix}manufacturer")
+    if mfr_el is not None:
+        manufacturer = _get_text(mfr_el, "name", ns_prefix)
+
     licenses: list[str] = []
     declared_licenses: list[str] = []
     licenses_el = el.find(f"{ns_prefix}licenses")
@@ -648,6 +704,7 @@ def _parse_cyclonedx_xml_component(el: ET.Element, ns_prefix: str) -> Optional[C
         purl=purl,
         cpe=cpe,
         supplier=supplier,
+        manufacturer=manufacturer,
         licenses=licenses,
         declared_licenses=declared_licenses,
         hashes=hashes,
@@ -774,10 +831,20 @@ def _parse_spdx_package(pkg: dict) -> Optional[Component]:
     else:
         supplier = supplier_raw
 
+    # PackageOriginator — NTIA/BSI fallback when supplier is absent
+    originator_raw = _spdx_val(pkg.get("originator"))
+    manufacturer = None
+    if originator_raw and ":" in originator_raw:
+        manufacturer = originator_raw.split(":", 1)[1].strip() or None
+    else:
+        manufacturer = originator_raw
+
     description = _spdx_val(pkg.get("description") or pkg.get("summary"))
     copyright_text = _spdx_val(pkg.get("copyrightText"))
     download_location = _spdx_val(pkg.get("downloadLocation"))
     bom_ref = pkg.get("SPDXID") or None
+    files_analyzed_raw = pkg.get("filesAnalyzed")
+    files_analyzed = bool(files_analyzed_raw) if files_analyzed_raw is not None else None
 
     ext_refs = []
     for ref in pkg.get("externalRefs") or []:
@@ -822,6 +889,7 @@ def _parse_spdx_package(pkg: dict) -> Optional[Component]:
         purl=purl,
         cpe=cpe,
         supplier=supplier,
+        manufacturer=manufacturer,
         licenses=licenses,
         declared_licenses=declared_licenses,
         hashes=hashes,
@@ -831,6 +899,7 @@ def _parse_spdx_package(pkg: dict) -> Optional[Component]:
         copyright=copyright_text,
         download_location=download_location,
         bom_ref=bom_ref,
+        files_analyzed=files_analyzed,
         raw=pkg,
     )
 
@@ -979,9 +1048,18 @@ def _parse_spdx_tv_package(pkg: dict) -> Optional[Component]:
     else:
         supplier = supplier_raw
 
+    originator_raw = _tv_val(pkg.get("PackageOriginator"))
+    manufacturer = None
+    if originator_raw and ":" in originator_raw:
+        manufacturer = originator_raw.split(":", 1)[1].strip() or None
+    else:
+        manufacturer = originator_raw
+
     copyright_text = _tv_val(pkg.get("PackageCopyrightText"))
     download_location = _tv_val(pkg.get("PackageDownloadLocation"))
     bom_ref = _tv_val(pkg.get("SPDXID"))
+    fa_raw = _tv_val(pkg.get("FilesAnalyzed"))
+    files_analyzed = (fa_raw.lower() == "true") if fa_raw is not None else None
 
     # ExternalRef: can be a single string or list
     ext_refs = []
@@ -1032,6 +1110,7 @@ def _parse_spdx_tv_package(pkg: dict) -> Optional[Component]:
         purl=purl,
         cpe=cpe,
         supplier=supplier,
+        manufacturer=manufacturer,
         licenses=licenses,
         declared_licenses=declared_licenses,
         hashes=hashes,
@@ -1041,5 +1120,6 @@ def _parse_spdx_tv_package(pkg: dict) -> Optional[Component]:
         copyright=copyright_text,
         download_location=download_location,
         bom_ref=bom_ref,
+        files_analyzed=files_analyzed,
         raw=pkg,
     )

@@ -504,6 +504,9 @@ def _score_licensing(doc: SBOMDocument) -> CategoryResult:
     version = doc.spec_version or ""
     is_cdx16 = fmt == "cyclonedx" and version.startswith("1.6")
 
+    data_license = getattr(doc, "data_license", None) or ""
+    has_data_license = bool(data_license.strip()) and data_license.strip().upper() not in ("NOASSERTION", "NONE")
+
     if n == 0:
         features = [
             FeatureResult("comp_has_license", 0.0, False, 0.25, "No components"),
@@ -511,6 +514,13 @@ def _score_licensing(doc: SBOMDocument) -> CategoryResult:
             FeatureResult("comp_has_declared_license", 0.0, False, 0.15, "No components"),
             FeatureResult("comp_no_deprecated_license", 0.0, False, 0.15, "No components"),
             FeatureResult("comp_no_restrictive_license", 0.0, False, 0.20, "No components"),
+            FeatureResult(
+                key="sbom_has_data_license",
+                score=_boolean(has_data_license),
+                applicable=True,
+                weight=0.10,
+                detail=f"SBOM data license: {data_license or 'missing'}",
+            ),
         ]
         return CategoryResult("License Compliance", 15, 0.0, features)
 
@@ -583,6 +593,13 @@ def _score_licensing(doc: SBOMDocument) -> CategoryResult:
             applicable=True,
             weight=0.20,
             detail=f"{n - no_restrictive}/{n} components have copyleft/restrictive licenses",
+        ),
+        FeatureResult(
+            key="sbom_has_data_license",
+            score=_boolean(has_data_license),
+            applicable=True,
+            weight=0.10,
+            detail=f"SBOM data license: {data_license or 'missing'}",
         ),
     ]
 
@@ -659,13 +676,20 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
     # Dependency graph
     dep_graph = getattr(doc, "dependency_graph", None)
     has_deps = bool(dep_graph and dep_graph.get("edges"))
+    is_cdx = fmt == "cyclonedx"
+    # CDX-only: compositions/completeness declarations
+    compositions = getattr(doc, "compositions", None) or []
+    has_completeness = bool(compositions)
 
     if n == 0:
         features = [
-            FeatureResult("doc_has_primary_component", _boolean(has_primary), True, 0.25,
+            FeatureResult("doc_has_primary_component", _boolean(has_primary), True, 0.20,
                           "Primary component: " + ("identified" if has_primary else "missing")),
-            FeatureResult("doc_dependency_graph_present", _boolean(has_deps), True, 0.25,
+            FeatureResult("doc_dependency_graph_present", _boolean(has_deps), True, 0.15,
                           "Dependency graph: " + ("present" if has_deps else "missing")),
+            FeatureResult("comp_has_dependencies_declared", 0.0, False, 0.10, "No components"),
+            FeatureResult("sbom_completeness_declared", _boolean(has_completeness), is_cdx, 0.05,
+                          "Compositions/completeness: " + ("declared" if has_completeness else "missing")),
             FeatureResult("comp_has_supplier", 0.0, False, 0.20, "No components"),
             FeatureResult("comp_has_source_url", 0.0, False, 0.15, "No components"),
             FeatureResult("comp_has_purpose", 0.0, False, 0.15, "No components"),
@@ -676,20 +700,44 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
     has_source = sum(1 for c in comps if _has_source_url(c))
     has_purpose = sum(1 for c in comps if c.component_type and c.component_type.strip())
 
+    # Per-component: how many have at least one dependency edge declared
+    dep_nodes = set()
+    if dep_graph:
+        for edge in dep_graph.get("edges") or []:
+            # edges are (from_ref, to_ref, rel_type) tuples
+            if isinstance(edge, (list, tuple)) and len(edge) >= 1:
+                dep_nodes.add(edge[0])
+    comp_ids = {getattr(c, "bom_ref", None) or c.name or "" for c in comps}
+    has_comp_deps = len(dep_nodes & comp_ids)
+
     features = [
         FeatureResult(
             key="doc_has_primary_component",
             score=_boolean(has_primary),
             applicable=True,
-            weight=0.25,
+            weight=0.20,
             detail="Primary component: " + ("identified" if has_primary else "not identified"),
         ),
         FeatureResult(
             key="doc_dependency_graph_present",
             score=_boolean(has_deps),
             applicable=True,
-            weight=0.25,
+            weight=0.15,
             detail="Dependency relationships: " + ("declared" if has_deps else "none"),
+        ),
+        FeatureResult(
+            key="comp_has_dependencies_declared",
+            score=_per_component(has_comp_deps, n) if has_deps else 0.0,
+            applicable=True,
+            weight=0.10,
+            detail=f"{has_comp_deps}/{n} components appear in dependency graph",
+        ),
+        FeatureResult(
+            key="sbom_completeness_declared",
+            score=_boolean(has_completeness),
+            applicable=is_cdx,
+            weight=0.05,
+            detail="Compositions/completeness: " + ("declared" if has_completeness else "missing"),
         ),
         FeatureResult(
             key="comp_has_supplier",

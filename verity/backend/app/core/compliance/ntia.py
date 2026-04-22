@@ -161,24 +161,37 @@ def check_ntia(doc: SBOMDocument) -> NTIAResult:
             detail=f"{len(comps) - len(no_name)}/{len(comps)} components have names",
         ))
 
-        # Supplier
-        no_supplier = [c.name for c in comps if not (c.supplier and c.supplier.strip())]
+        # Supplier — primary: supplier field; fallback: manufacturer (CDX) / PackageOriginator (SPDX)
+        def _has_supplier(c) -> bool:
+            return bool(
+                (c.supplier and c.supplier.strip())
+                or (getattr(c, "manufacturer", None) and c.manufacturer.strip())
+            )
+
+        def _supplier_value(c) -> str:
+            if c.supplier and c.supplier.strip():
+                return c.supplier
+            m = getattr(c, "manufacturer", None)
+            return m if m and m.strip() else ""
+
+        no_supplier = [c.name for c in comps if not _has_supplier(c)]
         supplier_score = 10.0 if not no_supplier else 0.0
         for c in comps:
+            ok = _has_supplier(c)
             records.append(_req(
                 "comp_with_supplier",
-                10.0 if (c.supplier and c.supplier.strip()) else 0.0,
+                10.0 if ok else 0.0,
                 c.name or "unknown",
-                c.supplier or "",
-                "Supplier name",
-                "Supplier present" if (c.supplier and c.supplier.strip()) else "Supplier missing",
+                _supplier_value(c),
+                "Supplier, manufacturer, or originator name",
+                "Supplier/manufacturer present" if ok else "Supplier missing",
             ))
         elements.append(NTIAElementResult(
             element_name="Supplier Name",
             compliant=not no_supplier,
             score=supplier_score,
             failing_components=no_supplier,
-            detail=f"{len(comps) - len(no_supplier)}/{len(comps)} components have supplier",
+            detail=f"{len(comps) - len(no_supplier)}/{len(comps)} components have supplier/manufacturer",
         ))
 
         # Version
