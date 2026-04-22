@@ -103,7 +103,9 @@ function WorkspaceCard({
       setInviteLink(link)
       setInviteEmail('')
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : 'Failed to generate invite link.')
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      const detail = axiosErr?.response?.data?.detail
+      setInviteError(detail || (err instanceof Error ? err.message : 'Failed to generate invite link.'))
     } finally {
       setInviteLoading(false)
     }
@@ -292,7 +294,9 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ['workspaces'] })
     },
     onError: (err: unknown) => {
-      setCreateError(err instanceof Error ? err.message : 'Failed to create workspace.')
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      const detail = axiosErr?.response?.data?.detail
+      setCreateError(detail || (err instanceof Error ? err.message : 'Failed to create workspace.'))
     },
   })
 

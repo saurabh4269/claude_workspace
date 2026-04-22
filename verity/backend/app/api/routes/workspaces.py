@@ -2,11 +2,12 @@
 Workspace management routes for Verity.
 """
 
+import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +21,7 @@ from app.api.schemas import (
     WorkspaceOut,
 )
 from app.config import settings
-from app.db.models import Scan, User, Workspace, WorkspaceMember, WorkspacePolicy
+from app.db.models import Scan, User, Workspace, WorkspaceMember, WorkspaceInvite, WorkspacePolicy
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -336,6 +337,64 @@ async def remove_member(
         )
 
     await db.delete(member)
+
+
+# ---------------------------------------------------------------------------
+# Invite member
+# ---------------------------------------------------------------------------
+
+@router.post("/{workspace_id}/invite")
+async def invite_member(
+    workspace_id: str,
+    body: dict,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth),
+) -> dict:
+    """Generate an invite link for a workspace. Owner/admin only."""
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Authentication required")
+
+    ws_result = await db.execute(select(Workspace).where(Workspace.id == workspace_id))
+    workspace = ws_result.scalar_one_or_none()
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workspace '{workspace_id}' not found")
+
+    # Verify caller is owner or admin
+    if workspace.owner_id != current_user.id:
+        mem_result = await db.execute(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == current_user.id,
+            )
+        )
+        member = mem_result.scalar_one_or_none()
+        if member is None or member.role not in ("owner", "admin"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner or admin required to invite members")
+
+    email = body.get("email", "").strip()
+    if not email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email is required")
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+    invite = WorkspaceInvite(
+        id=str(uuid.uuid4()),
+        workspace_id=workspace_id,
+        email=email,
+        token=token,
+        created_by=current_user.id,
+        expires_at=expires_at,
+        accepted=False,
+    )
+    db.add(invite)
+    await db.flush()
+
+    base_url = str(request.base_url).rstrip("/")
+    invite_link = f"{base_url}/invite?token={token}"
+
+    return {"invite_link": invite_link}
 
 
 # ---------------------------------------------------------------------------
