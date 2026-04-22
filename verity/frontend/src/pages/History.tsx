@@ -354,6 +354,9 @@ export default function History() {
                     Vulnerable
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
+                    Quality
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
                     NTIA
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
@@ -393,6 +396,20 @@ export default function History() {
                         </span>
                       ) : (
                         <span className="text-gray-400 font-sans">0</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-sans text-gray-500">
+                      {scan.qualityGrade != null ? (
+                        <span className="font-display font-bold text-sm text-[#464646]">
+                          {scan.qualityGrade}
+                          {scan.qualityScore != null && (
+                            <span className="text-xs text-gray-400 font-sans ml-1">
+                              ({scan.qualityScore.toFixed(1)})
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3">

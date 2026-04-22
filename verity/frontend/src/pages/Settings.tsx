@@ -189,10 +189,13 @@ export default function Settings() {
 
   const [authJustEnabled, setAuthJustEnabled] = useState(false)
 
+  const [platformError, setPlatformError] = React.useState<string | null>(null)
+
   const platformMutation = useMutation({
     mutationFn: (patch: Parameters<typeof siteSettings.update>[0]) =>
       siteSettings.update(patch),
     onSuccess: (data, variables) => {
+      setPlatformError(null)
       queryClient.setQueryData(['site-settings'], data)
 
       if ('auth_enabled' in variables) {
@@ -208,6 +211,11 @@ export default function Settings() {
           queryClient.invalidateQueries({ queryKey: ['me'] })
         }
       }
+    },
+    onError: (err: unknown) => {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      const detail = axiosErr?.response?.data?.detail
+      setPlatformError(detail || 'Failed to update platform settings.')
     },
   })
 
@@ -243,7 +251,9 @@ export default function Settings() {
       setPasswordError(null)
     },
     onError: (err: unknown) => {
-      setPasswordError(err instanceof Error ? err.message : 'Failed to change password.')
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      const detail = axiosErr?.response?.data?.detail
+      setPasswordError(detail || (err instanceof Error ? err.message : 'Failed to change password.'))
     },
   })
 
@@ -288,7 +298,7 @@ export default function Settings() {
 
   const handleInvite = async (workspaceId: string, email: string): Promise<string> => {
     const result = await workspaces.invite(workspaceId, email)
-    return result.invite_link
+    return result.inviteLink
   }
 
   return (
@@ -351,6 +361,13 @@ export default function Settings() {
                 description="Allow OSV.dev lookups platform-wide. Overrides per-scan setting."
                 disabled={platformMutation.isPending}
               />
+
+              {/* Platform mutation error */}
+              {platformError && (
+                <div className="mt-2 rounded-lg bg-[#f2eeee] px-4 py-2">
+                  <p className="text-xs text-[#dc2626] font-sans">{platformError}</p>
+                </div>
+              )}
 
               {/* Account info rows */}
               {user && (

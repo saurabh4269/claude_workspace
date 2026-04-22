@@ -8,16 +8,12 @@ import {
   FileText,
   CheckCircle,
   XCircle,
-  AlertTriangle,
   ChevronLeft,
-  GitBranch,
 } from 'lucide-react'
-import type { DependencyGraph } from '@/lib/api'
 import { scans } from '@/lib/api'
 import { RiskBadge } from '@/components/RiskBadge'
 import { RiskChart } from '@/components/RiskChart'
 import { ComponentTable } from '@/components/ComponentTable'
-import { QualityScorePanel } from '@/components/QualityScorePanel'
 import { CompliancePanel } from '@/components/CompliancePanel'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -25,6 +21,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
+import type { QualityScore, NTIAResult } from '@/lib/api'
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -57,143 +54,126 @@ function StatCell({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function DependencyGraphPanel({ graph }: { graph: DependencyGraph }) {
-  const orphanSet = new Set(graph.orphans)
+function gradeColor(grade: string): string {
+  if (grade === 'A') return 'text-[#22c55e]'
+  if (grade === 'B') return 'text-[#93cb52]'
+  if (grade === 'C') return 'text-[#f59e0b]'
+  if (grade === 'D') return 'text-[#f97316]'
+  return 'text-[#dc2626]'
+}
+
+function scoreBarColor(score: number): string {
+  if (score >= 8) return 'bg-[#22c55e]'
+  if (score >= 6) return 'bg-[#93cb52]'
+  if (score >= 4) return 'bg-[#f59e0b]'
+  if (score >= 2) return 'bg-[#f97316]'
+  return 'bg-[#dc2626]'
+}
+
+/** Compact quality card shown in the Overview tab */
+function QualityCompactCard({ quality }: { quality: QualityScore }) {
+  const top3 = [...quality.categories]
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 3)
 
   return (
-    <div className="space-y-6">
-      {/* Stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          { label: 'Nodes', value: graph.nodes.length },
-          { label: 'Edges', value: graph.edges.length },
-          { label: 'Max Depth', value: graph.maxDepth },
-          { label: 'Orphans', value: graph.orphans.length },
-        ].map(({ label, value }) => (
-          <Card key={label}>
-            <div className="flex flex-col items-center py-4">
-              <p className="text-2xl font-display font-bold text-[#464646]">{value}</p>
-              <p className="text-xs text-gray-400 font-sans mt-1">{label}</p>
-            </div>
-          </Card>
-        ))}
-      </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Quality Score</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-5 mb-4">
+          <span className={`text-5xl font-display font-bold ${gradeColor(quality.grade)}`}>
+            {quality.grade}
+          </span>
+          <div>
+            <span className="text-2xl font-display font-bold text-[#464646]">
+              {quality.overallScore.toFixed(1)}
+              <span className="text-base text-gray-400 font-sans"> / 10</span>
+            </span>
+            <p className="text-xs text-gray-400 font-sans mt-0.5">Overall Score</p>
+          </div>
+        </div>
+        <div className="space-y-2">
+          {top3.map((cat) => {
+            const pct = Math.min((cat.score / 10) * 100, 100)
+            return (
+              <div key={cat.name}>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-xs font-sans text-gray-500">{cat.name}</span>
+                  <span className="text-xs font-mono text-gray-400">{cat.score.toFixed(1)}</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${scoreBarColor(cat.score)}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
-      {/* Completeness banner */}
-      <div
-        className={cn(
-          'rounded-xl px-5 py-3 flex items-center gap-2 text-sm font-sans',
-          graph.isComplete
-            ? 'bg-green-50 text-[#1c9770]'
-            : 'bg-amber-50 text-amber-700',
-        )}
-      >
-        {graph.isComplete ? (
-          <CheckCircle size={16} />
-        ) : (
-          <AlertTriangle size={16} />
-        )}
-        {graph.isComplete
-          ? 'Dependency graph is declared complete — all components are reachable.'
-          : 'Dependency graph is incomplete or completeness not declared. Orphan components may exist.'}
-      </div>
-
-      {/* Orphans */}
-      {graph.orphans.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-amber-600">
-              <AlertTriangle size={16} />
-              Orphan Components ({graph.orphans.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-gray-400 font-sans mb-3">
-              These components are not reachable from the primary component via declared dependency
-              relationships.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {graph.orphans.map((id) => (
-                <span
-                  key={id}
-                  className="px-2 py-1 rounded-md bg-amber-50 text-amber-700 text-xs font-mono border border-amber-200"
-                >
-                  {id}
-                </span>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Edge table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GitBranch size={16} />
-            Dependency Edges
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {graph.edges.length === 0 ? (
-            <p className="text-sm text-gray-400 font-sans px-6 py-4">
-              No dependency relationships declared in this SBOM.
-            </p>
+/** NTIA card showing per-element data when available */
+function NTIACard({ ntiaCompliant, ntia, invalidComponents }: {
+  ntiaCompliant: boolean
+  ntia?: NTIAResult
+  invalidComponents: number
+}) {
+  return (
+    <Card className="xl:col-span-2">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          {ntiaCompliant ? (
+            <CheckCircle size={18} className="text-[#93cb52]" />
           ) : (
-            <div className="overflow-x-auto max-h-[50vh]">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
-                      From
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
-                      Relationship
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
-                      To
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {graph.edges.map((edge, idx) => {
-                    const [from, to, rel] = edge
-                    const fromOrphan = orphanSet.has(from)
-                    const toOrphan = orphanSet.has(to)
-                    return (
-                      <tr
-                        key={idx}
-                        className="border-t border-[#e5e7eb] odd:bg-white even:bg-gray-50/50"
-                      >
-                        <td
-                          className={cn(
-                            'px-4 py-2 font-mono text-xs',
-                            fromOrphan ? 'text-amber-600' : 'text-gray-600',
-                          )}
-                        >
-                          {from}
-                        </td>
-                        <td className="px-4 py-2 text-xs text-[#1c9770] font-display font-bold">
-                          {rel || '→'}
-                        </td>
-                        <td
-                          className={cn(
-                            'px-4 py-2 font-mono text-xs',
-                            toOrphan ? 'text-amber-600' : 'text-gray-600',
-                          )}
-                        >
-                          {to}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <XCircle size={18} className="text-[#dc2626]" />
           )}
-        </CardContent>
-      </Card>
-    </div>
+          NTIA Compliance
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {ntia ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {ntia.elements?.map((el) => (
+              <div key={el.elementName} className="flex items-start gap-2 text-xs font-sans">
+                {el.compliant
+                  ? <CheckCircle size={12} className="text-[#93cb52] mt-0.5 shrink-0" />
+                  : <XCircle size={12} className="text-[#dc2626] mt-0.5 shrink-0" />}
+                <div>
+                  <span className="font-medium text-[#464646]">{el.elementName}</span>
+                  {el.detail && (
+                    <p className="text-gray-400 mt-0.5">{el.detail}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : ntiaCompliant ? (
+          <div className="rounded-xl bg-green-50 px-5 py-4">
+            <p className="text-sm font-sans text-[#464646]">
+              This SBOM meets the NTIA minimum elements for Software Bill of Materials.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-xl bg-[#f2eeee] px-5 py-4">
+            <p className="text-sm font-sans text-[#464646] mb-2">
+              This SBOM does not fully meet NTIA minimum elements. Review validation issues
+              for details on missing or non-conformant fields.
+            </p>
+            {invalidComponents > 0 && (
+              <p className="text-xs text-[#dc2626] font-sans">
+                {invalidComponents} component(s) are missing required fields.
+              </p>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -222,8 +202,8 @@ export default function ScanDetail() {
     try {
       const blob = await scans.exportPdf(id)
       triggerDownload(blob, `verity-scan-${id}.pdf`)
-    } catch (err) {
-      setExportError(err instanceof Error ? err.message : 'PDF export failed.')
+    } catch {
+      setExportError('PDF export failed.')
     } finally {
       setExportingPdf(false)
     }
@@ -236,8 +216,8 @@ export default function ScanDetail() {
     try {
       const blob = await scans.exportJson(id)
       triggerDownload(blob, `verity-scan-${id}.json`)
-    } catch (err) {
-      setExportError(err instanceof Error ? err.message : 'JSON export failed.')
+    } catch {
+      setExportError('JSON export failed.')
     } finally {
       setExportingJson(false)
     }
@@ -281,6 +261,8 @@ export default function ScanDetail() {
     .sort((a, b) => b.riskScore - a.riskScore)
     .slice(0, 5)
 
+  const ntiaData = data.compliance?.ntia
+
   return (
     <div className="p-8 pb-24 space-y-6">
       {/* Back link */}
@@ -293,27 +275,22 @@ export default function ScanDetail() {
       </Link>
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          <h1 className="font-display font-bold text-2xl text-[#464646] truncate">
-            {data.filename}
-          </h1>
-          <div className="flex items-center gap-3 mt-2 flex-wrap">
-            <Badge variant="info">{data.sbomFormat}</Badge>
-            {data.formatVersion && (
-              <span className="text-xs text-gray-400 font-sans">{data.formatVersion}</span>
-            )}
-            <span className="text-xs text-gray-400 font-sans">{formatDate(data.createdAt)}</span>
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <RiskBadge level={data.riskLevel} className="text-sm px-3 py-1" />
+      <div className="min-w-0">
+        <h1 className="font-display font-bold text-2xl text-[#464646] truncate">
+          {data.filename}
+        </h1>
+        <div className="flex items-center gap-3 mt-2 flex-wrap">
+          <Badge variant="info">{data.sbomFormat}</Badge>
+          {data.formatVersion && (
+            <span className="text-xs text-gray-400 font-sans">{data.formatVersion}</span>
+          )}
+          <span className="text-xs text-gray-400 font-sans">{formatDate(data.createdAt)}</span>
         </div>
       </div>
 
-      {/* Stats row */}
+      {/* Stats row — Total Components, Vulnerable, Quality Score+Grade, Risk Level */}
       <Card>
-        <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-y sm:divide-y-0 divide-[#e5e7eb]">
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-[#e5e7eb]">
           <StatCell label="Total Components" value={data.totalComponents} />
           <StatCell
             label="Vulnerable"
@@ -324,36 +301,24 @@ export default function ScanDetail() {
             }
           />
           <StatCell
-            label="NTIA Compliant"
+            label="Quality Score"
             value={
-              data.ntiaCompliant ? (
-                <CheckCircle size={24} className="text-[#93cb52] mx-auto" />
-              ) : (
-                <XCircle size={24} className="text-[#dc2626] mx-auto" />
-              )
-            }
-          />
-          <StatCell
-            label="Invalid Components"
-            value={
-              <span className={data.invalidComponents > 0 ? 'text-[#f59e0b]' : ''}>
-                {data.invalidComponents}
-              </span>
-            }
-          />
-          {data.qualityScore != null && (
-            <StatCell
-              label="Quality Score"
-              value={
-                <span className="flex items-center justify-center gap-1">
+              data.qualityScore != null ? (
+                <span className="flex items-center justify-center gap-1.5">
                   <span>{data.qualityScore.toFixed(1)}</span>
                   {data.qualityGrade && (
                     <Badge variant="info" className="text-xs">{data.qualityGrade}</Badge>
                   )}
                 </span>
-              }
-            />
-          )}
+              ) : (
+                <span className="text-gray-300">—</span>
+              )
+            }
+          />
+          <StatCell
+            label="Risk Level"
+            value={<RiskBadge level={data.riskLevel} />}
+          />
         </div>
       </Card>
 
@@ -399,19 +364,9 @@ export default function ScanDetail() {
           <Tabs.Trigger value="components" className={TAB_TRIGGER_CLASS}>
             Components ({data.totalComponents})
           </Tabs.Trigger>
-          {data.quality && (
-            <Tabs.Trigger value="quality" className={TAB_TRIGGER_CLASS}>
-              Quality
-            </Tabs.Trigger>
-          )}
           {data.compliance && (
             <Tabs.Trigger value="compliance" className={TAB_TRIGGER_CLASS}>
               Compliance
-            </Tabs.Trigger>
-          )}
-          {data.dependencyGraph && (
-            <Tabs.Trigger value="dependencies" className={TAB_TRIGGER_CLASS}>
-              Dependencies
             </Tabs.Trigger>
           )}
           <Tabs.Trigger value="issues" className={TAB_TRIGGER_CLASS}>
@@ -422,7 +377,7 @@ export default function ScanDetail() {
           </Tabs.Trigger>
         </Tabs.List>
 
-        {/* Overview tab */}
+        {/* Overview tab — Risk chart, Top components, Quality compact, NTIA */}
         <Tabs.Content value="overview">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {/* Donut chart */}
@@ -466,40 +421,17 @@ export default function ScanDetail() {
               </CardContent>
             </Card>
 
+            {/* Quality compact card */}
+            {data.quality && (
+              <QualityCompactCard quality={data.quality} />
+            )}
+
             {/* NTIA compliance card */}
-            <Card className="xl:col-span-2">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  {data.ntiaCompliant ? (
-                    <CheckCircle size={18} className="text-[#93cb52]" />
-                  ) : (
-                    <XCircle size={18} className="text-[#dc2626]" />
-                  )}
-                  NTIA Compliance
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data.ntiaCompliant ? (
-                  <div className="rounded-xl bg-green-50 px-5 py-4">
-                    <p className="text-sm font-sans text-[#464646]">
-                      This SBOM meets the NTIA minimum elements for Software Bill of Materials.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-xl bg-[#f2eeee] px-5 py-4">
-                    <p className="text-sm font-sans text-[#464646] mb-2">
-                      This SBOM does not fully meet NTIA minimum elements. Review validation issues
-                      for details on missing or non-conformant fields.
-                    </p>
-                    {data.invalidComponents > 0 && (
-                      <p className="text-xs text-[#dc2626] font-sans">
-                        {data.invalidComponents} component(s) are missing required fields.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <NTIACard
+              ntiaCompliant={data.ntiaCompliant}
+              ntia={ntiaData}
+              invalidComponents={data.invalidComponents}
+            />
           </div>
         </Tabs.Content>
 
@@ -508,24 +440,10 @@ export default function ScanDetail() {
           <ComponentTable components={data.components ?? []} />
         </Tabs.Content>
 
-        {/* Quality tab */}
-        {data.quality && (
-          <Tabs.Content value="quality">
-            <QualityScorePanel quality={data.quality} />
-          </Tabs.Content>
-        )}
-
-        {/* Compliance tab */}
+        {/* Compliance tab — simplified table */}
         {data.compliance && (
           <Tabs.Content value="compliance">
             <CompliancePanel compliance={data.compliance} />
-          </Tabs.Content>
-        )}
-
-        {/* Dependencies tab */}
-        {data.dependencyGraph && (
-          <Tabs.Content value="dependencies">
-            <DependencyGraphPanel graph={data.dependencyGraph} />
           </Tabs.Content>
         )}
 

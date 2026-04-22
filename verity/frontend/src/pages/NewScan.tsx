@@ -66,7 +66,7 @@ export default function NewScan() {
   const [saveToHistory, setSaveToHistory] = useState(
     () => localStorage.getItem('pref_save_history') !== 'false'
   )
-  const [workspaceId, setWorkspaceId] = useState<string>('')
+  const [workspaceId, setWorkspaceId] = useState<string>('none')
   const [scanError, setScanError] = useState<string | null>(null)
 
   const { data: workspaceList } = useQuery({
@@ -82,8 +82,19 @@ export default function NewScan() {
       navigate(`/scan/${data.id}`)
     },
     onError: (err: unknown) => {
-      const message =
-        err instanceof Error ? err.message : 'An unexpected error occurred.'
+      // Extract meaningful message from Axios error responses
+      const axiosErr = err as { response?: { data?: { detail?: string | { msg: string }[] } } }
+      const detail = axiosErr?.response?.data?.detail
+      let message: string
+      if (typeof detail === 'string') {
+        message = detail
+      } else if (Array.isArray(detail) && detail.length > 0) {
+        message = typeof detail[0] === 'string' ? detail[0] : (detail[0] as { msg: string }).msg
+      } else if (err instanceof Error) {
+        message = err.message
+      } else {
+        message = 'An unexpected error occurred.'
+      }
       setScanError(message)
     },
   })
@@ -104,7 +115,8 @@ export default function NewScan() {
     const opts: ScanOptions = {
       vulnCheck,
       saveToHistory,
-      workspaceId: workspaceId || undefined,
+      runCompliance: true,
+      workspaceId: workspaceId !== 'none' ? workspaceId : undefined,
     }
     uploadMutation.mutate({ file: selectedFile, opts })
   }
@@ -188,7 +200,7 @@ export default function NewScan() {
                   <Select.Content className="z-50 overflow-hidden rounded-lg border border-[#e5e7eb] bg-white shadow-lg">
                     <Select.Viewport className="p-1">
                       <Select.Item
-                        value=""
+                        value="none"
                         className="flex cursor-pointer items-center rounded-md px-3 py-2 text-sm font-sans text-gray-400 hover:bg-gray-50 focus:outline-none focus:bg-gray-50"
                       >
                         <Select.ItemText>None</Select.ItemText>

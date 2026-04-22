@@ -139,14 +139,19 @@ def parse(content: str, filename: str = "") -> SBOMDocument:
                 doc = _parse_spdx_json(data)
                 doc.file_format = "json"
                 return doc
-            # Structural guessing
+            # Structural guessing — require at least one recognizable SBOM field
             if "components" in data or "metadata" in data:
                 doc = _parse_cyclonedx_json(data)
                 doc.file_format = "json"
                 return doc
-            doc = _parse_spdx_json(data)
-            doc.file_format = "json"
-            return doc
+            if "packages" in data or "files" in data or "relationships" in data:
+                doc = _parse_spdx_json(data)
+                doc.file_format = "json"
+                return doc
+            # No recognizable SBOM structure found
+            raise ParseError(
+                "Unsupported SBOM format. Supported: CycloneDX JSON/XML, SPDX JSON/tag-value."
+            )
         raise ParseError("JSON SBOM must be a JSON object")
 
     # --- XML ---

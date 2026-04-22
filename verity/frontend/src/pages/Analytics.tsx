@@ -4,10 +4,6 @@ import { BarChart3, TrendingUp, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { workspaces } from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
-import { RiskBadge } from '@/components/RiskBadge'
-import { RiskChart } from '@/components/RiskChart'
-
-const DEMO_WORKSPACE_KEY = 'analytics_workspace_id'
 
 function StatCard({ icon: Icon, label, value, sub }: {
   icon: React.ElementType
@@ -96,22 +92,27 @@ function TrendLine({ trend }: { trend: { date: string; riskScore: number; qualit
 }
 
 export default function Analytics() {
-  const [workspaceId, setWorkspaceId] = React.useState<string>(
-    () => localStorage.getItem(DEMO_WORKSPACE_KEY) || ''
-  )
-  const [inputId, setInputId] = React.useState(workspaceId)
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = React.useState<string>('')
 
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['workspace-analytics', workspaceId],
-    queryFn: () => workspaces.analytics(workspaceId),
-    enabled: workspaceId.length > 0,
+  const { data: workspaceList, isLoading: wsLoading } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => workspaces.list(),
     retry: false,
   })
 
-  const handleLoad = () => {
-    localStorage.setItem(DEMO_WORKSPACE_KEY, inputId)
-    setWorkspaceId(inputId)
-  }
+  // Auto-select first workspace when list loads
+  React.useEffect(() => {
+    if (workspaceList && workspaceList.length > 0 && !selectedWorkspaceId) {
+      setSelectedWorkspaceId(workspaceList[0].id)
+    }
+  }, [workspaceList, selectedWorkspaceId])
+
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['workspace-analytics', selectedWorkspaceId],
+    queryFn: () => workspaces.analytics(selectedWorkspaceId),
+    enabled: selectedWorkspaceId.length > 0,
+    retry: false,
+  })
 
   return (
     <div className="p-8 pb-24 space-y-6">
@@ -122,46 +123,60 @@ export default function Analytics() {
         </p>
       </div>
 
-      <div className="flex gap-3 items-end">
-        <div className="flex-1 max-w-xs">
-          <label className="block text-xs font-sans text-gray-400 mb-1">Workspace ID</label>
-          <input
-            type="text"
-            value={inputId}
-            onChange={(e) => setInputId(e.target.value)}
-            placeholder="e.g. abc123..."
-            className="w-full px-3 py-2 text-sm border border-[#e5e7eb] rounded-lg font-sans focus:outline-none focus:ring-2 focus:ring-[#1c9770]"
-          />
+      {/* Workspace selector */}
+      {wsLoading ? (
+        <div className="flex items-center gap-2">
+          <Spinner size={16} />
+          <span className="text-sm text-gray-400 font-sans">Loading workspaces...</span>
         </div>
-        <button
-          type="button"
-          onClick={handleLoad}
-          className="px-4 py-2 text-sm font-display font-bold bg-[#1c9770] text-white rounded-lg hover:bg-[#15795a] transition-colors"
-        >
-          Load
-        </button>
-      </div>
-
-      {!workspaceId && (
+      ) : !workspaceList || workspaceList.length === 0 ? (
         <div className="rounded-xl bg-gray-50 px-6 py-8 text-center">
           <BarChart3 size={40} className="text-gray-300 mx-auto mb-3" />
-          <p className="text-sm text-gray-400 font-sans">Enter a workspace ID to view analytics.</p>
+          <p className="text-sm text-gray-400 font-sans">No workspaces found. Create one in Settings.</p>
+        </div>
+      ) : (
+        <div className="flex gap-3 items-end flex-wrap">
+          <div>
+            <label className="block text-xs font-display font-bold text-gray-500 mb-1">
+              Workspace
+            </label>
+            <select
+              value={selectedWorkspaceId}
+              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+              className="h-10 px-3 text-sm border border-[#e5e7eb] rounded-lg font-sans focus:outline-none focus:ring-2 focus:ring-[#1c9770] bg-white text-[#464646]"
+            >
+              {workspaceList.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
-      {workspaceId && isLoading && (
+      {selectedWorkspaceId && isLoading && (
         <div className="flex justify-center py-12">
           <Spinner size={28} />
         </div>
       )}
 
-      {workspaceId && isError && (
+      {selectedWorkspaceId && isError && (
         <div className="rounded-xl bg-[#f2eeee] px-6 py-4 text-[#dc2626] text-sm font-sans">
           {(error as Error)?.message || 'Failed to load analytics.'}
         </div>
       )}
 
-      {data && (
+      {data && data.totalScans === 0 && (
+        <div className="rounded-xl bg-gray-50 px-6 py-8 text-center">
+          <BarChart3 size={40} className="text-gray-300 mx-auto mb-3" />
+          <p className="text-sm text-gray-400 font-sans">
+            No scans yet in this workspace. Run a scan and associate it with this workspace to see analytics.
+          </p>
+        </div>
+      )}
+
+      {data && data.totalScans > 0 && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
@@ -179,7 +194,7 @@ export default function Analytics() {
               icon={AlertTriangle}
               label="Avg Risk Score"
               value={data.avgRiskScore.toFixed(1)}
-              sub="out of 10"
+              sub="out of 100"
             />
             <StatCard
               icon={ShieldCheck}
