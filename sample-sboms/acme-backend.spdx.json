@@ -1,0 +1,83 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "acme-backend",
+  "documentNamespace": "https://example.com/sbom/acme-backend-1.0.0-20240115",
+  "creationInfo": {
+    "created": "2024-01-15T10:00:00Z",
+    "creators": [
+      "Organization: ACME Corp",
+      "Tool: syft-0.84.0"
+    ]
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-flask",
+      "name": "flask",
+      "versionInfo": "2.3.2",
+      "supplier": "Organization: Pallets",
+      "downloadLocation": "https://pypi.org/project/Flask/2.3.2/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "checksums": [
+        {"algorithm": "SHA256", "checksumValue": "4cad37f16f9a0e3b18f0fba3c9e81a84d1b2e14c0c478f1a3e2d9b51472c8f9a"}
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/flask@2.3.2"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-numpy",
+      "name": "numpy",
+      "versionInfo": "1.25.1",
+      "supplier": "Organization: NumPy Developers",
+      "downloadLocation": "https://pypi.org/project/numpy/1.25.1/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "checksums": [
+        {"algorithm": "SHA256", "checksumValue": "9c24b7a2b77a2c5b48e3abe7f40e7b2de5c1a903f48e7c4a8b91d2e047f63a20"}
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/numpy@1.25.1"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-cryptography",
+      "name": "cryptography",
+      "versionInfo": "41.0.1",
+      "downloadLocation": "https://pypi.org/project/cryptography/41.0.1/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-internal-util",
+      "name": "internal-util",
+      "versionInfo": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    }
+  ],
+  "relationships": [
+    {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-flask"},
+    {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-numpy"},
+    {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-cryptography"},
+    {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-internal-util"}
+  ]
+}

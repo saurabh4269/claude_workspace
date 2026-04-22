@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.api.schemas import (
+    ChangePasswordRequest,
     InviteCreate,
     TokenOut,
     TokenRefresh,
@@ -104,8 +105,9 @@ async def login(
 
     if not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account is inactive",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     token_data = {"sub": user.id}
@@ -127,14 +129,7 @@ async def refresh_token(
     """Exchange a valid refresh token for a new token pair."""
     _require_auth_enabled()
 
-    payload = verify_token(body.refresh_token)
-    token_type = payload.get("type")
-    if token_type != "refresh":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type: expected refresh token",
-        )
-
+    payload = verify_token(body.refresh_token, expected_type="refresh")
     user_id = payload.get("sub")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -170,6 +165,29 @@ async def get_me(
         )
 
     return UserOut.model_validate(current_user)
+
+
+# ---------------------------------------------------------------------------
+# Change password
+# ---------------------------------------------------------------------------
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    body: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Change the current user's password."""
+    _require_auth_enabled()
+
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+
+    current_user.hashed_password = get_password_hash(body.new_password)
+    await db.flush()
 
 
 # ---------------------------------------------------------------------------

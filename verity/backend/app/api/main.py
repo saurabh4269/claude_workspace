@@ -12,7 +12,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.config import settings
+from app.config import load_overrides, settings
 from app.core.parser import ParseError
 from app.db.session import init_db
 
@@ -31,9 +31,9 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["10/second"])
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the database on startup."""
+    load_overrides()
     await init_db()
     yield
-    # Shutdown cleanup can be added here if needed
 
 
 # ---------------------------------------------------------------------------
@@ -106,11 +106,14 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
 # Routers
 # ---------------------------------------------------------------------------
 
-from app.api.routes import auth, scans, workspaces  # noqa: E402
+from app.api.routes import auth, ci, components, scans, site_settings, workspaces  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(scans.router, prefix="/api/v1")
 app.include_router(workspaces.router, prefix="/api/v1")
+app.include_router(site_settings.router, prefix="/api/v1")
+app.include_router(components.router, prefix="/api/v1")
+app.include_router(ci.router, prefix="/api/v1")
 
 # ---------------------------------------------------------------------------
 # Health check
@@ -119,4 +122,10 @@ app.include_router(workspaces.router, prefix="/api/v1")
 @app.get("/health", tags=["meta"])
 async def health_check() -> dict:
     """Simple liveness probe endpoint."""
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "1.0.0", "auth_enabled": settings.AUTH_ENABLED}
+
+
+@app.get("/api/v1/health", tags=["meta"])
+async def health_check_v1() -> dict:
+    """Health endpoint accessible through the nginx /api proxy."""
+    return {"status": "ok", "version": "1.0.0", "auth_enabled": settings.AUTH_ENABLED}

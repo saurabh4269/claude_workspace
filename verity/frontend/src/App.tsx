@@ -9,6 +9,7 @@ import ScanDetail from '@/pages/ScanDetail'
 import History from '@/pages/History'
 import Settings from '@/pages/Settings'
 import Login from '@/pages/Login'
+import Analytics from '@/pages/Analytics'
 
 function PageLoader() {
   return (
@@ -76,6 +77,15 @@ export default function App() {
         element={
           <AppLayout>
             <Settings />
+          </AppLayout>
+        }
+      />
+
+      <Route
+        path="/analytics"
+        element={
+          <AppLayout>
+            <Analytics />
           </AppLayout>
         }
       />

@@ -10,16 +10,20 @@ import {
   XCircle,
   AlertTriangle,
   ChevronLeft,
+  GitBranch,
 } from 'lucide-react'
+import type { DependencyGraph } from '@/lib/api'
 import { scans } from '@/lib/api'
 import { RiskBadge } from '@/components/RiskBadge'
 import { RiskChart } from '@/components/RiskChart'
 import { ComponentTable } from '@/components/ComponentTable'
+import { QualityScorePanel } from '@/components/QualityScorePanel'
+import { CompliancePanel } from '@/components/CompliancePanel'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
-import { formatDate, formatScore } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -53,6 +57,146 @@ function StatCell({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+function DependencyGraphPanel({ graph }: { graph: DependencyGraph }) {
+  const orphanSet = new Set(graph.orphans)
+
+  return (
+    <div className="space-y-6">
+      {/* Stats row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {[
+          { label: 'Nodes', value: graph.nodes.length },
+          { label: 'Edges', value: graph.edges.length },
+          { label: 'Max Depth', value: graph.maxDepth },
+          { label: 'Orphans', value: graph.orphans.length },
+        ].map(({ label, value }) => (
+          <Card key={label}>
+            <div className="flex flex-col items-center py-4">
+              <p className="text-2xl font-display font-bold text-[#464646]">{value}</p>
+              <p className="text-xs text-gray-400 font-sans mt-1">{label}</p>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Completeness banner */}
+      <div
+        className={cn(
+          'rounded-xl px-5 py-3 flex items-center gap-2 text-sm font-sans',
+          graph.isComplete
+            ? 'bg-green-50 text-[#1c9770]'
+            : 'bg-amber-50 text-amber-700',
+        )}
+      >
+        {graph.isComplete ? (
+          <CheckCircle size={16} />
+        ) : (
+          <AlertTriangle size={16} />
+        )}
+        {graph.isComplete
+          ? 'Dependency graph is declared complete — all components are reachable.'
+          : 'Dependency graph is incomplete or completeness not declared. Orphan components may exist.'}
+      </div>
+
+      {/* Orphans */}
+      {graph.orphans.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle size={16} />
+              Orphan Components ({graph.orphans.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-gray-400 font-sans mb-3">
+              These components are not reachable from the primary component via declared dependency
+              relationships.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {graph.orphans.map((id) => (
+                <span
+                  key={id}
+                  className="px-2 py-1 rounded-md bg-amber-50 text-amber-700 text-xs font-mono border border-amber-200"
+                >
+                  {id}
+                </span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Edge table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <GitBranch size={16} />
+            Dependency Edges
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {graph.edges.length === 0 ? (
+            <p className="text-sm text-gray-400 font-sans px-6 py-4">
+              No dependency relationships declared in this SBOM.
+            </p>
+          ) : (
+            <div className="overflow-x-auto max-h-[50vh]">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
+                      From
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
+                      Relationship
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
+                      To
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {graph.edges.map((edge, idx) => {
+                    const [from, to, rel] = edge
+                    const fromOrphan = orphanSet.has(from)
+                    const toOrphan = orphanSet.has(to)
+                    return (
+                      <tr
+                        key={idx}
+                        className="border-t border-[#e5e7eb] odd:bg-white even:bg-gray-50/50"
+                      >
+                        <td
+                          className={cn(
+                            'px-4 py-2 font-mono text-xs',
+                            fromOrphan ? 'text-amber-600' : 'text-gray-600',
+                          )}
+                        >
+                          {from}
+                        </td>
+                        <td className="px-4 py-2 text-xs text-[#1c9770] font-display font-bold">
+                          {rel || '→'}
+                        </td>
+                        <td
+                          className={cn(
+                            'px-4 py-2 font-mono text-xs',
+                            toOrphan ? 'text-amber-600' : 'text-gray-600',
+                          )}
+                        >
+                          {to}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 const TAB_TRIGGER_CLASS = cn(
   'px-4 py-2 text-sm font-display font-bold text-gray-400 border-b-2 border-transparent transition-colors',
   'data-[state=active]:text-[#1c9770] data-[state=active]:border-[#1c9770]',
@@ -63,6 +207,7 @@ export default function ScanDetail() {
   const { id } = useParams<{ id: string }>()
   const [exportingPdf, setExportingPdf] = React.useState(false)
   const [exportingJson, setExportingJson] = React.useState(false)
+  const [exportError, setExportError] = React.useState<string | null>(null)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['scan', id],
@@ -73,11 +218,12 @@ export default function ScanDetail() {
   const handleExportPdf = async () => {
     if (!id) return
     setExportingPdf(true)
+    setExportError(null)
     try {
       const blob = await scans.exportPdf(id)
       triggerDownload(blob, `verity-scan-${id}.pdf`)
-    } catch {
-      // silently ignore - could add toast
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'PDF export failed.')
     } finally {
       setExportingPdf(false)
     }
@@ -86,11 +232,12 @@ export default function ScanDetail() {
   const handleExportJson = async () => {
     if (!id) return
     setExportingJson(true)
+    setExportError(null)
     try {
       const blob = await scans.exportJson(id)
       triggerDownload(blob, `verity-scan-${id}.json`)
-    } catch {
-      // silently ignore
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'JSON export failed.')
     } finally {
       setExportingJson(false)
     }
@@ -161,16 +308,12 @@ export default function ScanDetail() {
         </div>
         <div className="flex flex-col items-end gap-2">
           <RiskBadge level={data.riskLevel} className="text-sm px-3 py-1" />
-          <p className="font-display font-bold text-3xl text-[#464646]">
-            {formatScore(data.riskScore)}{' '}
-            <span className="text-base font-sans font-normal text-gray-400">/ 100</span>
-          </p>
         </div>
       </div>
 
       {/* Stats row */}
       <Card>
-        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-[#e5e7eb]">
+        <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-y sm:divide-y-0 divide-[#e5e7eb]">
           <StatCell label="Total Components" value={data.totalComponents} />
           <StatCell
             label="Vulnerable"
@@ -198,10 +341,26 @@ export default function ScanDetail() {
               </span>
             }
           />
+          {data.qualityScore != null && (
+            <StatCell
+              label="Quality Score"
+              value={
+                <span className="flex items-center justify-center gap-1">
+                  <span>{data.qualityScore.toFixed(1)}</span>
+                  {data.qualityGrade && (
+                    <Badge variant="info" className="text-xs">{data.qualityGrade}</Badge>
+                  )}
+                </span>
+              }
+            />
+          )}
         </div>
       </Card>
 
       {/* Export bar */}
+      {exportError && (
+        <p className="text-xs text-[#dc2626] font-sans text-right">{exportError}</p>
+      )}
       <div className="flex items-center justify-end gap-3">
         <Button
           variant="outline"
@@ -233,13 +392,28 @@ export default function ScanDetail() {
 
       {/* Tabs */}
       <Tabs.Root defaultValue="overview">
-        <Tabs.List className="flex border-b border-[#e5e7eb] mb-6 gap-0">
+        <Tabs.List className="flex border-b border-[#e5e7eb] mb-6 gap-0 flex-wrap">
           <Tabs.Trigger value="overview" className={TAB_TRIGGER_CLASS}>
             Overview
           </Tabs.Trigger>
           <Tabs.Trigger value="components" className={TAB_TRIGGER_CLASS}>
             Components ({data.totalComponents})
           </Tabs.Trigger>
+          {data.quality && (
+            <Tabs.Trigger value="quality" className={TAB_TRIGGER_CLASS}>
+              Quality
+            </Tabs.Trigger>
+          )}
+          {data.compliance && (
+            <Tabs.Trigger value="compliance" className={TAB_TRIGGER_CLASS}>
+              Compliance
+            </Tabs.Trigger>
+          )}
+          {data.dependencyGraph && (
+            <Tabs.Trigger value="dependencies" className={TAB_TRIGGER_CLASS}>
+              Dependencies
+            </Tabs.Trigger>
+          )}
           <Tabs.Trigger value="issues" className={TAB_TRIGGER_CLASS}>
             Validation Issues ({data.validationIssues?.length ?? 0})
           </Tabs.Trigger>
@@ -333,6 +507,27 @@ export default function ScanDetail() {
         <Tabs.Content value="components">
           <ComponentTable components={data.components ?? []} />
         </Tabs.Content>
+
+        {/* Quality tab */}
+        {data.quality && (
+          <Tabs.Content value="quality">
+            <QualityScorePanel quality={data.quality} />
+          </Tabs.Content>
+        )}
+
+        {/* Compliance tab */}
+        {data.compliance && (
+          <Tabs.Content value="compliance">
+            <CompliancePanel compliance={data.compliance} />
+          </Tabs.Content>
+        )}
+
+        {/* Dependencies tab */}
+        {data.dependencyGraph && (
+          <Tabs.Content value="dependencies">
+            <DependencyGraphPanel graph={data.dependencyGraph} />
+          </Tabs.Content>
+        )}
 
         {/* Validation Issues tab */}
         <Tabs.Content value="issues">

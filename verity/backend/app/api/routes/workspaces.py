@@ -3,15 +3,24 @@ Workspace management routes for Verity.
 """
 
 import uuid
+from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, require_auth
-from app.api.schemas import WorkspaceMemberOut, WorkspaceOut
+from app.api.schemas import (
+    PolicyOut,
+    PolicyUpsert,
+    WorkspaceAnalyticsOut,
+    WorkspaceCreate,
+    WorkspaceMemberOut,
+    WorkspaceOut,
+)
 from app.config import settings
-from app.db.models import User, Workspace, WorkspaceMember
+from app.db.models import Scan, User, Workspace, WorkspaceMember, WorkspacePolicy
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -22,28 +31,21 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 @router.post("", response_model=WorkspaceOut, status_code=status.HTTP_201_CREATED)
 async def create_workspace(
-    body: dict,
+    body: WorkspaceCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
 ) -> WorkspaceOut:
     """Create a new workspace. Requires authentication."""
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Workspace name is required",
-        )
-
     if current_user is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authentication is required to create a workspace",
         )
 
     workspace_id = str(uuid.uuid4())
     workspace = Workspace(
         id=workspace_id,
-        name=name,
+        name=body.name,
         owner_id=current_user.id,
     )
     db.add(workspace)
@@ -79,10 +81,7 @@ async def list_workspaces(
 ) -> list[WorkspaceOut]:
     """List all workspaces the current user belongs to."""
     if current_user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
+        return []
 
     # Find workspaces where user is a member
     member_result = await db.execute(
@@ -131,7 +130,7 @@ async def get_workspace(
     """Retrieve a workspace by ID."""
     if current_user is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Authentication required",
         )
 
@@ -185,7 +184,7 @@ async def delete_workspace(
     """Delete a workspace. Only the workspace owner can delete it."""
     if current_user is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Authentication required",
         )
 
@@ -220,7 +219,7 @@ async def list_members(
     """List all members of a workspace."""
     if current_user is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Authentication required",
         )
 
@@ -285,7 +284,7 @@ async def remove_member(
     """Remove a member from a workspace. Owner or admin only."""
     if current_user is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Authentication required",
         )
 
@@ -337,3 +336,228 @@ async def remove_member(
         )
 
     await db.delete(member)
+
+
+# ---------------------------------------------------------------------------
+# Workspace analytics
+# ---------------------------------------------------------------------------
+
+@router.get("/{workspace_id}/analytics", response_model=WorkspaceAnalyticsOut)
+async def get_workspace_analytics(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth),
+) -> WorkspaceAnalyticsOut:
+    """Return aggregate statistics for all scans in a workspace."""
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Authentication required")
+
+    ws_result = await db.execute(select(Workspace).where(Workspace.id == workspace_id))
+    workspace = ws_result.scalar_one_or_none()
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workspace '{workspace_id}' not found")
+
+    # Verify membership
+    mem_result = await db.execute(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == current_user.id,
+        )
+    )
+    if mem_result.scalar_one_or_none() is None and workspace.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a workspace member")
+
+    scans_result = await db.execute(
+        select(Scan).where(Scan.workspace_id == workspace_id).order_by(Scan.created_at.desc())
+    )
+    scans = scans_result.scalars().all()
+
+    total_scans = len(scans)
+    if total_scans == 0:
+        return WorkspaceAnalyticsOut(
+            workspace_id=workspace_id,
+            total_scans=0,
+            avg_quality_score=None,
+            avg_risk_score=0.0,
+            ntia_pass_rate=0.0,
+            risk_distribution={},
+            score_trend=[],
+            top_vulnerabilities=[],
+        )
+
+    risk_scores = [s.risk_score for s in scans]
+    avg_risk = sum(risk_scores) / len(risk_scores)
+
+    quality_scores = [s.quality_score for s in scans if s.quality_score is not None]
+    avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else None
+
+    ntia_pass = sum(1 for s in scans if s.ntia_compliant)
+    ntia_rate = ntia_pass / total_scans if total_scans else 0.0
+
+    risk_dist: dict[str, int] = {}
+    for s in scans:
+        risk_dist[s.risk_level] = risk_dist.get(s.risk_level, 0) + 1
+
+    trend = [
+        {
+            "date": s.created_at.isoformat(),
+            "risk_score": s.risk_score,
+            "quality_score": s.quality_score,
+        }
+        for s in reversed(scans[-30:])  # last 30 scans, oldest first
+    ]
+
+    # Aggregate top vulns across all components in workspace scans
+    vuln_counts: dict[str, int] = {}
+    from app.db.models import ScanComponent
+    scan_ids = [s.id for s in scans]
+    if scan_ids:
+        comp_result = await db.execute(
+            select(ScanComponent).where(ScanComponent.scan_id.in_(scan_ids))
+        )
+        for comp in comp_result.scalars().all():
+            for v in (comp.vulnerabilities or []):
+                if isinstance(v, dict):
+                    vid = v.get("id", "")
+                    if vid:
+                        vuln_counts[vid] = vuln_counts.get(vid, 0) + 1
+
+    top_vulns = sorted(
+        [{"id": vid, "count": cnt} for vid, cnt in vuln_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:10]
+
+    return WorkspaceAnalyticsOut(
+        workspace_id=workspace_id,
+        total_scans=total_scans,
+        avg_quality_score=avg_quality,
+        avg_risk_score=avg_risk,
+        ntia_pass_rate=ntia_rate,
+        risk_distribution=risk_dist,
+        score_trend=trend,
+        top_vulnerabilities=top_vulns,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Workspace policy CRUD
+# ---------------------------------------------------------------------------
+
+@router.get("/{workspace_id}/policy", response_model=PolicyOut)
+async def get_workspace_policy(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth),
+) -> PolicyOut:
+    """Get the YAML policy for a workspace."""
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Authentication required")
+
+    ws_result = await db.execute(select(Workspace).where(Workspace.id == workspace_id))
+    workspace = ws_result.scalar_one_or_none()
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workspace '{workspace_id}' not found")
+
+    pol_result = await db.execute(
+        select(WorkspacePolicy).where(WorkspacePolicy.workspace_id == workspace_id)
+    )
+    policy = pol_result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No policy configured for this workspace")
+
+    return PolicyOut(
+        id=policy.id,
+        workspace_id=policy.workspace_id,
+        name=policy.name,
+        policy_yaml=policy.policy_yaml,
+        updated_at=policy.updated_at,
+    )
+
+
+@router.put("/{workspace_id}/policy", response_model=PolicyOut)
+async def upsert_workspace_policy(
+    workspace_id: str,
+    body: PolicyUpsert,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth),
+) -> PolicyOut:
+    """Create or replace the YAML policy for a workspace. Owner/admin only."""
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Authentication required")
+
+    ws_result = await db.execute(select(Workspace).where(Workspace.id == workspace_id))
+    workspace = ws_result.scalar_one_or_none()
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workspace '{workspace_id}' not found")
+
+    # Only owner or workspace admin may manage policy
+    if workspace.owner_id != current_user.id and not current_user.is_admin:
+        mem_result = await db.execute(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == current_user.id,
+            )
+        )
+        member = mem_result.scalar_one_or_none()
+        if member is None or member.role not in ("owner", "admin"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner or admin required")
+
+    pol_result = await db.execute(
+        select(WorkspacePolicy).where(WorkspacePolicy.workspace_id == workspace_id)
+    )
+    policy = pol_result.scalar_one_or_none()
+
+    now = datetime.now(timezone.utc)
+    if policy is None:
+        policy = WorkspacePolicy(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            name=body.name,
+            policy_yaml=body.policy_yaml,
+            updated_at=now,
+        )
+        db.add(policy)
+    else:
+        policy.name = body.name
+        policy.policy_yaml = body.policy_yaml
+        policy.updated_at = now
+
+    await db.flush()
+    await db.refresh(policy)
+
+    return PolicyOut(
+        id=policy.id,
+        workspace_id=policy.workspace_id,
+        name=policy.name,
+        policy_yaml=policy.policy_yaml,
+        updated_at=policy.updated_at,
+    )
+
+
+@router.delete("/{workspace_id}/policy", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workspace_policy(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth),
+) -> None:
+    """Delete the policy for a workspace. Owner only."""
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Authentication required")
+
+    ws_result = await db.execute(select(Workspace).where(Workspace.id == workspace_id))
+    workspace = ws_result.scalar_one_or_none()
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workspace '{workspace_id}' not found")
+
+    if workspace.owner_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner required")
+
+    pol_result = await db.execute(
+        select(WorkspacePolicy).where(WorkspacePolicy.workspace_id == workspace_id)
+    )
+    policy = pol_result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No policy to delete")
+
+    await db.delete(policy)

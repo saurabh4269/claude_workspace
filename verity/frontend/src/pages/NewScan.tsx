@@ -60,8 +60,12 @@ function ToggleOption({ id, label, description, checked, onCheckedChange }: Togg
 export default function NewScan() {
   const navigate = useNavigate()
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [vulnCheck, setVulnCheck] = useState(true)
-  const [saveToHistory, setSaveToHistory] = useState(true)
+  const [vulnCheck, setVulnCheck] = useState(
+    () => localStorage.getItem('pref_vuln_check') !== 'false'
+  )
+  const [saveToHistory, setSaveToHistory] = useState(
+    () => localStorage.getItem('pref_save_history') !== 'false'
+  )
   const [workspaceId, setWorkspaceId] = useState<string>('')
   const [scanError, setScanError] = useState<string | null>(null)
 

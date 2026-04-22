@@ -6,6 +6,7 @@ import {
   Plus,
   History,
   Settings,
+  BarChart3,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -19,6 +20,7 @@ const navItems: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard },
   { label: 'New Scan', to: '/scan/new', icon: Plus },
   { label: 'History', to: '/history', icon: History },
+  { label: 'Analytics', to: '/analytics', icon: BarChart3 },
   { label: 'Settings', to: '/settings', icon: Settings },
 ]
 

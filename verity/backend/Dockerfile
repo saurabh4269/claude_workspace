@@ -12,15 +12,10 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY pyproject.toml ./
+COPY app/ ./app/
+COPY cli.py ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && pip install \
-    "fastapi>=0.111.0" "uvicorn[standard]>=0.29.0" \
-    "sqlalchemy[asyncio]>=2.0.0" "aiosqlite>=0.20.0" \
-    "pydantic>=2.0.0" "pydantic-settings>=2.0.0" \
-    "httpx>=0.27.0" "python-jose[cryptography]>=3.3.0" \
-    "passlib[bcrypt]>=1.7.4" "python-multipart>=0.0.9" \
-    "weasyprint>=62.0" "click>=8.1.0" "rich>=13.0.0" \
-    "slowapi>=0.1.9" "alembic>=1.13.0" "email-validator>=2.1.0"
+    pip install --upgrade pip && pip install .
 
 # Stage 2: lean runtime (no build tools)
 FROM python:3.11-slim AS runtime

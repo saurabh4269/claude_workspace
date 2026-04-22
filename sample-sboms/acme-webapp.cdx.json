@@ -1,0 +1,51 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.4",
+  "version": 1,
+  "serialNumber": "urn:uuid:a8e7e4c1-2b3d-4f5e-9a1b-3c4d5e6f7890",
+  "metadata": {
+    "timestamp": "2024-01-15T10:00:00Z",
+    "authors": [{"name": "Security Team"}],
+    "tools": [{"name": "cdxgen", "version": "9.9.4"}],
+    "component": {
+      "type": "application",
+      "name": "acme-web-app",
+      "version": "2.1.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "react",
+      "version": "18.2.0",
+      "purl": "pkg:npm/react@18.2.0",
+      "supplier": {"name": "Meta Platforms, Inc."},
+      "licenses": [{"license": {"id": "MIT"}}],
+      "hashes": [
+        {"alg": "SHA-256", "content": "b55e56e0b57b3a64dc5a5f68e5a0fb7b27de6b7a50ce5f8a22cad2dfafb69ea3"}
+      ]
+    },
+    {
+      "type": "library",
+      "name": "axios",
+      "version": "1.4.0",
+      "purl": "pkg:npm/axios@1.4.0",
+      "licenses": [{"license": {"id": "MIT"}}],
+      "hashes": [
+        {"alg": "SHA-256", "content": "e5a8c7f3d12b47e9a301c6f5b84927d0c3e18a46f72b5d9e0c134f8a27e6d891"}
+      ]
+    },
+    {
+      "type": "library",
+      "name": "coreutils",
+      "version": "8.32",
+      "cpe": "cpe:2.3:a:gnu:coreutils:8.32:*:*:*:*:*:*:*",
+      "licenses": [{"license": {"id": "GPL-3.0-only"}}]
+    },
+    {
+      "type": "library",
+      "name": "legacy-auth",
+      "description": "Internal legacy authentication module - vendor unknown"
+    }
+  ]
+}

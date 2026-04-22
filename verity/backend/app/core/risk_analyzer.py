@@ -96,15 +96,35 @@ def _classify_license(license_id: str) -> Optional[tuple[str, int]]:
 
 
 # ---------------------------------------------------------------------------
+# Scoring constants
+# ---------------------------------------------------------------------------
+
+_SCORE_MISSING_VERSION = 15
+_SCORE_MISSING_IDENTIFIER = 20     # no PURL and no CPE
+_SCORE_MISSING_SUPPLIER = 10
+_SCORE_MISSING_LICENSE = 10
+
+_SCORE_CVE_CRITICAL = 50            # CVSS >= 9.0
+_SCORE_CVE_HIGH = 35                # CVSS 7.0–8.9
+_SCORE_CVE_MEDIUM = 20              # CVSS 4.0–6.9
+_SCORE_CVE_LOW = 10                 # CVSS < 4.0
+
+_THRESHOLD_CRITICAL = 80
+_THRESHOLD_HIGH = 50
+_THRESHOLD_MEDIUM = 21
+
+_ESCALATION_FRACTION = 0.30         # bump level if this fraction of components are HIGH+
+
+# ---------------------------------------------------------------------------
 # Score to risk level mapping
 # ---------------------------------------------------------------------------
 
 def _score_to_level(score: float) -> str:
-    if score >= 80:
+    if score >= _THRESHOLD_CRITICAL:
         return "CRITICAL"
-    if score >= 50:
+    if score >= _THRESHOLD_HIGH:
         return "HIGH"
-    if score >= 21:
+    if score >= _THRESHOLD_MEDIUM:
         return "MEDIUM"
     return "LOW"
 
@@ -144,9 +164,11 @@ def analyze(
     # Overall risk level = highest component level, escalated if many HIGH+ components
     overall_level = _compute_overall_level(component_risks)
 
-    # Overall risk score = mean of component scores (or 0 if no components)
+    # Overall risk score = max component score so it is consistent with the level
+    # (using the mean produced a score that contradicted the displayed level, e.g.
+    # score 23 shown alongside level HIGH when one component scored 55)
     if component_risks:
-        overall_score = sum(cr.risk_score for cr in component_risks) / len(component_risks)
+        overall_score = max(cr.risk_score for cr in component_risks)
     else:
         overall_score = 0.0
 
@@ -170,25 +192,21 @@ def _score_component(comp: Component, vuln_results: dict) -> ComponentRisk:
     score = 0.0
     factors: list[str] = []
 
-    # Missing version
     if not comp.version:
-        score += 15
-        factors.append("Missing version (+15)")
+        score += _SCORE_MISSING_VERSION
+        factors.append(f"Missing version (+{_SCORE_MISSING_VERSION})")
 
-    # Missing unique identifier (PURL and CPE both absent)
     if not comp.purl and not comp.cpe:
-        score += 20
-        factors.append("Missing PURL and CPE (+20)")
+        score += _SCORE_MISSING_IDENTIFIER
+        factors.append(f"Missing PURL and CPE (+{_SCORE_MISSING_IDENTIFIER})")
 
-    # Missing supplier
     if not comp.supplier:
-        score += 10
-        factors.append("Missing supplier (+10)")
+        score += _SCORE_MISSING_SUPPLIER
+        factors.append(f"Missing supplier (+{_SCORE_MISSING_SUPPLIER})")
 
-    # No license information
     if not comp.licenses:
-        score += 10
-        factors.append("No license information (+10)")
+        score += _SCORE_MISSING_LICENSE
+        factors.append(f"No license information (+{_SCORE_MISSING_LICENSE})")
     else:
         # Check copyleft risk across all licenses listed
         copyleft_seen: set[str] = set()
@@ -216,17 +234,17 @@ def _score_component(comp: Component, vuln_results: dict) -> ComponentRisk:
         cvss = float(vuln.get("cvss_score") or 0.0)
         vuln_id = vuln.get("id") or "unknown"
         if cvss >= 9.0:
-            score += 50
-            factors.append(f"CRITICAL vulnerability {vuln_id} CVSS {cvss} (+50)")
+            score += _SCORE_CVE_CRITICAL
+            factors.append(f"CRITICAL vulnerability {vuln_id} CVSS {cvss} (+{_SCORE_CVE_CRITICAL})")
         elif cvss >= 7.0:
-            score += 35
-            factors.append(f"HIGH vulnerability {vuln_id} CVSS {cvss} (+35)")
+            score += _SCORE_CVE_HIGH
+            factors.append(f"HIGH vulnerability {vuln_id} CVSS {cvss} (+{_SCORE_CVE_HIGH})")
         elif cvss >= 4.0:
-            score += 20
-            factors.append(f"MEDIUM vulnerability {vuln_id} CVSS {cvss} (+20)")
+            score += _SCORE_CVE_MEDIUM
+            factors.append(f"MEDIUM vulnerability {vuln_id} CVSS {cvss} (+{_SCORE_CVE_MEDIUM})")
         else:
-            score += 10
-            factors.append(f"LOW vulnerability {vuln_id} CVSS {cvss} (+10)")
+            score += _SCORE_CVE_LOW
+            factors.append(f"LOW vulnerability {vuln_id} CVSS {cvss} (+{_SCORE_CVE_LOW})")
 
     risk_level = _score_to_level(score)
 
@@ -260,7 +278,7 @@ def _compute_overall_level(component_risks: list[ComponentRisk]) -> str:
         1 for cr in component_risks
         if _LEVEL_ORDER.get(cr.risk_level, 0) >= _LEVEL_ORDER["HIGH"]
     )
-    if total > 0 and (high_or_critical / total) > 0.30:
+    if total > 0 and (high_or_critical / total) > _ESCALATION_FRACTION:
         current_order = _LEVEL_ORDER.get(overall, 0)
         escalated_order = min(current_order + 1, 3)
         overall = [k for k, v in _LEVEL_ORDER.items() if v == escalated_order][0]

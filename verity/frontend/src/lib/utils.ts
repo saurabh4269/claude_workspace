@@ -60,5 +60,5 @@ export function riskBorderColor(level: string): string {
 }
 
 export function formatScore(score: number): string {
-  return score.toFixed(1)
+  return (score ?? 0).toFixed(1)
 }

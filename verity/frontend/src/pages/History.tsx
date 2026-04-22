@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Spinner } from '@/components/ui/Spinner'
-import { formatDate, formatScore } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 
 const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
 const PER_PAGE = 20
@@ -182,7 +182,7 @@ export default function History() {
           <Select.Root
             value={riskLevel}
             onValueChange={(v) => {
-              setRiskLevel(v)
+              setRiskLevel(v === 'ALL' ? '' : v)
               setPage(1)
             }}
           >
@@ -196,7 +196,7 @@ export default function History() {
               <Select.Content className="z-50 overflow-hidden rounded-lg border border-[#e5e7eb] bg-white shadow-lg">
                 <Select.Viewport className="p-1">
                   <Select.Item
-                    value=""
+                    value="ALL"
                     className="flex cursor-pointer items-center rounded-md px-3 py-2 text-sm font-sans text-gray-400 hover:bg-gray-50 focus:outline-none focus:bg-gray-50"
                   >
                     <Select.ItemText>All levels</Select.ItemText>
@@ -258,7 +258,7 @@ export default function History() {
             <Select.Root
               value={workspaceId}
               onValueChange={(v) => {
-                setWorkspaceId(v)
+                setWorkspaceId(v === 'ALL' ? '' : v)
                 setPage(1)
               }}
             >
@@ -272,7 +272,7 @@ export default function History() {
                 <Select.Content className="z-50 overflow-hidden rounded-lg border border-[#e5e7eb] bg-white shadow-lg">
                   <Select.Viewport className="p-1">
                     <Select.Item
-                      value=""
+                      value="ALL"
                       className="flex cursor-pointer items-center rounded-md px-3 py-2 text-sm font-sans text-gray-400 hover:bg-gray-50 focus:outline-none focus:bg-gray-50"
                     >
                       <Select.ItemText>All workspaces</Select.ItemText>
@@ -348,9 +348,6 @@ export default function History() {
                     Risk Level
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
-                    Score
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
                     Components
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-display font-bold text-gray-500 uppercase tracking-wide">
@@ -385,9 +382,6 @@ export default function History() {
                     </td>
                     <td className="px-4 py-3">
                       <RiskBadge level={scan.riskLevel} />
-                    </td>
-                    <td className="px-4 py-3 font-display font-bold text-[#464646]">
-                      {formatScore(scan.riskScore)}
                     </td>
                     <td className="px-4 py-3 font-sans text-gray-500">
                       {scan.totalComponents}

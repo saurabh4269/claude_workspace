@@ -5,8 +5,11 @@ JSON fields are stored as Text with helper properties for serialization.
 """
 
 import json
+import logging
 import uuid
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import (
     Boolean,
@@ -149,6 +152,17 @@ class Scan(Base):
     save_to_history: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # summary stored as JSON text
     _summary: Mapped[str | None] = mapped_column("summary", Text, nullable=True)
+    # Quality scoring (new)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_grade: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    _category_scores: Mapped[str | None] = mapped_column("category_scores", Text, nullable=True)
+    _dependency_graph: Mapped[str | None] = mapped_column("dependency_graph", Text, nullable=True)
+    # Compliance results (new)
+    _ntia_result: Mapped[str | None] = mapped_column("ntia_result", Text, nullable=True)
+    _bsi_result: Mapped[str | None] = mapped_column("bsi_result", Text, nullable=True)
+    _fsct_result: Mapped[str | None] = mapped_column("fsct_result", Text, nullable=True)
+    _oct_result: Mapped[str | None] = mapped_column("oct_result", Text, nullable=True)
+    _policy_result: Mapped[str | None] = mapped_column("policy_result", Text, nullable=True)
 
     # Relationships
     user: Mapped["User | None"] = relationship("User", back_populates="scans")
@@ -167,12 +181,82 @@ class Scan(Base):
             return {}
         try:
             return json.loads(self._summary)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.error("Corrupt JSON in scan.summary (id=%s): %s", self.id, exc)
             return {}
 
     @summary.setter
     def summary(self, value: dict) -> None:
         self._summary = json.dumps(value) if value is not None else None
+
+    def _get_json(self, attr: str) -> dict | list | None:
+        val = getattr(self, attr)
+        if val is None:
+            return None
+        try:
+            return json.loads(val)
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.error("Corrupt JSON in scan.%s (id=%s): %s", attr, self.id, exc)
+            return None
+
+    def _set_json(self, attr: str, value) -> None:
+        setattr(self, attr, json.dumps(value) if value is not None else None)
+
+    @property
+    def category_scores(self) -> dict | None:
+        return self._get_json("_category_scores")
+
+    @category_scores.setter
+    def category_scores(self, value) -> None:
+        self._set_json("_category_scores", value)
+
+    @property
+    def dependency_graph(self) -> dict | None:
+        return self._get_json("_dependency_graph")
+
+    @dependency_graph.setter
+    def dependency_graph(self, value) -> None:
+        self._set_json("_dependency_graph", value)
+
+    @property
+    def ntia_result(self) -> dict | None:
+        return self._get_json("_ntia_result")
+
+    @ntia_result.setter
+    def ntia_result(self, value) -> None:
+        self._set_json("_ntia_result", value)
+
+    @property
+    def bsi_result(self) -> dict | None:
+        return self._get_json("_bsi_result")
+
+    @bsi_result.setter
+    def bsi_result(self, value) -> None:
+        self._set_json("_bsi_result", value)
+
+    @property
+    def fsct_result(self) -> dict | None:
+        return self._get_json("_fsct_result")
+
+    @fsct_result.setter
+    def fsct_result(self, value) -> None:
+        self._set_json("_fsct_result", value)
+
+    @property
+    def oct_result(self) -> dict | None:
+        return self._get_json("_oct_result")
+
+    @oct_result.setter
+    def oct_result(self, value) -> None:
+        self._set_json("_oct_result", value)
+
+    @property
+    def policy_result(self) -> dict | None:
+        return self._get_json("_policy_result")
+
+    @policy_result.setter
+    def policy_result(self, value) -> None:
+        self._set_json("_policy_result", value)
 
 
 class ScanComponent(Base):
@@ -211,7 +295,8 @@ class ScanComponent(Base):
             return []
         try:
             return json.loads(self._licenses)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.error("Corrupt JSON in component.licenses (id=%s): %s", self.id, exc)
             return []
 
     @licenses.setter
@@ -224,7 +309,8 @@ class ScanComponent(Base):
             return []
         try:
             return json.loads(self._missing_fields)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.error("Corrupt JSON in component.missing_fields (id=%s): %s", self.id, exc)
             return []
 
     @missing_fields.setter
@@ -237,9 +323,38 @@ class ScanComponent(Base):
             return []
         try:
             return json.loads(self._vulnerabilities)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.error("Corrupt JSON in component.vulnerabilities (id=%s): %s", self.id, exc)
             return []
 
     @vulnerabilities.setter
     def vulnerabilities(self, value: list) -> None:
         self._vulnerabilities = json.dumps(value) if value is not None else None
+
+
+class KevCache(Base):
+    __tablename__ = "kev_cache"
+
+    cve_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    vendor_project: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vulnerability_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    due_date: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class WorkspacePolicy(Base):
+    __tablename__ = "workspace_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_default_uuid)
+    workspace_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False, unique=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="Default Policy")
+    policy_yaml: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+
+    workspace: Mapped["Workspace"] = relationship("Workspace")

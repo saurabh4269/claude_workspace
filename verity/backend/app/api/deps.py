@@ -44,15 +44,13 @@ async def get_current_user(
         )
 
     token = authorization[7:]  # Strip "Bearer " prefix
-    payload = verify_token(token)
+    payload = verify_token(token, expected_type="access")
 
     user_id: Optional[str] = payload.get("sub")
-    token_type: Optional[str] = payload.get("type")
-
-    if not user_id or token_type != "access":
+    if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type or missing subject claim",
+            detail="Missing subject claim in token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

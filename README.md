@@ -15,7 +15,7 @@ Verity automates the validation and risk assessment of Software Bill of Material
 - **Export** — PDF reports and JSON for downstream tooling
 - **Scan history** — stored in SQLite, queryable with filters and pagination
 - **Workspaces** — invite teammates, share scans across a team
-- **Optional auth** — JWT-based login, disabled by default
+- **Optional auth** — JWT-based login, disabled by default; toggle on/off from the Settings UI without restarting
 - **CLI** — pipe-friendly, CI/CD ready with configurable fail thresholds
 - **Web UI** — React dashboard with risk charts, component tables, and export buttons
 - **REST API** — OpenAPI docs at `/docs`
@@ -92,10 +92,19 @@ All settings are driven by environment variables (or a `.env` file in `verity/ba
 | `SECRET_KEY` | `change-me-in-production` | JWT signing key. Change before deploying. |
 | `AUTH_ENABLED` | `false` | Enable login / registration |
 | `HISTORY_ENABLED` | `true` | Persist scans to the database |
-| `VULN_CHECK_ENABLED` | `true` | Enable OSV.dev lookups by default |
+| `VULN_CHECK_ENABLED` | `true` | Enable OSV.dev lookups platform-wide |
 | `NVD_API_KEY` | _(unset)_ | NVD API key for CVSS enrichment (optional) |
 | `MAX_UPLOAD_SIZE_MB` | `50` | Maximum SBOM file size |
 | `CORS_ORIGINS` | `["http://localhost", ...]` | Allowed CORS origins |
+| `SITE_SETTINGS_PATH` | `/app/data/site_settings.json` | Where UI-driven setting overrides are persisted |
+
+`AUTH_ENABLED`, `HISTORY_ENABLED`, and `VULN_CHECK_ENABLED` can also be toggled live from **Settings → Platform** in the web UI. Changes take effect immediately and are persisted to `SITE_SETTINGS_PATH` so they survive container restarts. Environment variables act as the initial default; UI overrides take precedence once written.
+
+**Enabling authentication for the first time**
+
+1. Go to **Settings → Platform** and toggle **Authentication** on.
+2. You will be redirected to the login page — click **Sign up** to create the first account.
+3. Subsequent platform-setting changes require admin privileges once auth is on.
 
 **Switching to PostgreSQL**
 
@@ -154,7 +163,11 @@ POST   /api/v1/workspaces            Create a workspace
 GET    /api/v1/workspaces            List workspaces
 POST   /api/v1/auth/register         Register (AUTH_ENABLED only)
 POST   /api/v1/auth/login            Login (AUTH_ENABLED only)
+POST   /api/v1/auth/change-password  Change password (AUTH_ENABLED only)
 POST   /api/v1/auth/invite/{ws_id}   Generate an invite link
+
+GET    /api/v1/settings              Get current platform settings
+PATCH  /api/v1/settings              Update platform settings (admin only when auth on)
 
 GET    /health                       Health check
 ```
@@ -209,6 +222,19 @@ alembic upgrade head
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui |
 | Charts | Recharts |
 | Container | Docker, nginx |
+
+---
+
+## Sample SBOMs
+
+Two ready-to-use test files are included in `sample-sboms/`:
+
+| File | Format | Components | Expected result |
+|---|---|---|---|
+| `acme-webapp.cdx.json` | CycloneDX 1.4 JSON | 4 (react, axios, coreutils, legacy-auth) | Risk: HIGH, 3 invalid, 5 NTIA issues |
+| `acme-backend.spdx.json` | SPDX 2.3 JSON | 4 (flask, numpy, cryptography, internal-util) | Risk: HIGH, 2 invalid, 5 NTIA issues |
+
+Both files intentionally include components with missing fields and license issues to exercise the full validation pipeline.
 
 ---
 

@@ -1,0 +1,761 @@
+"""
+Multi-category weighted SBOM quality scoring engine for Verity.
+
+Produces a QualityScore (0.0–10.0) with per-category breakdowns and a letter grade.
+The score measures SBOM structural completeness, not security risk (that is the
+RiskReport from risk_analyzer.py). Both are complementary.
+
+Score categories and weights:
+  1. Structural Validity     — weight 10
+  2. Identity & Traceability — weight 15
+  3. Provenance              — weight 12
+  4. Integrity               — weight 12
+  5. License Compliance      — weight 15
+  6. Vuln Traceability       — weight 16
+  7. Completeness            — weight 12
+
+Total denominator: 92 (weighted mean, excluding N/A features).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Optional
+
+from app.core.parser import SBOMDocument, Component
+from app.core.licenses.spdx_db import (
+    is_absent, is_valid_spdx, is_deprecated, is_restrictive,
+)
+
+# ---------------------------------------------------------------------------
+# Output dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FeatureResult:
+    key: str
+    score: float          # 0.0–10.0
+    applicable: bool      # False = exclude from denominator (N/A for this format)
+    weight: float
+    detail: str           # human-readable explanation
+
+
+@dataclass
+class CategoryResult:
+    name: str
+    weight: int
+    score: float          # 0.0–10.0, weighted mean of applicable features
+    features: list[FeatureResult]
+
+    @property
+    def weighted_score(self) -> float:
+        return round(self.score * self.weight / 92, 4)
+
+
+@dataclass
+class QualityScore:
+    overall_score: float          # 0.0–10.0
+    grade: str                    # A/B/C/D/F
+    categories: list[CategoryResult]
+    sbom_format: str
+    total_components: int
+
+
+# ---------------------------------------------------------------------------
+# Scoring helpers
+# ---------------------------------------------------------------------------
+
+def _per_component(have: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    if have >= total:
+        return 10.0
+    # Cap at 9.9 when have < total to avoid false perfect score
+    return min(9.9, round(10.0 * have / total, 2))
+
+
+def _boolean(condition: bool) -> float:
+    return 10.0 if condition else 0.0
+
+
+def _tiered(value: int) -> float:
+    """0, 5, or 10."""
+    if value >= 2:
+        return 10.0
+    if value == 1:
+        return 5.0
+    return 0.0
+
+
+def _category_score(features: list[FeatureResult]) -> float:
+    applicable = [f for f in features if f.applicable]
+    if not applicable:
+        return 0.0
+    total_weight = sum(f.weight for f in applicable)
+    if total_weight <= 0:
+        return 0.0
+    weighted_sum = sum(f.score * f.weight for f in applicable)
+    return round(weighted_sum / total_weight, 2)
+
+
+def _overall_score(categories: list[CategoryResult]) -> float:
+    total_weight = sum(c.weight for c in categories)
+    if total_weight <= 0:
+        return 0.0
+    weighted_sum = sum(c.score * c.weight for c in categories)
+    return round(weighted_sum / total_weight, 2)
+
+
+def _grade(score: float) -> str:
+    if score >= 9.0:
+        return "A"
+    if score >= 8.0:
+        return "B"
+    if score >= 7.0:
+        return "C"
+    if score >= 5.0:
+        return "D"
+    return "F"
+
+
+# ---------------------------------------------------------------------------
+# PURL / CPE validation
+# ---------------------------------------------------------------------------
+
+_PURL_PATTERN = re.compile(
+    r"^pkg:[a-zA-Z][a-zA-Z0-9.+\-]*/[^@\s]+",
+    re.IGNORECASE,
+)
+
+_CPE23_PATTERN = re.compile(
+    r"^cpe:2\.3:[aho\*\-]"
+    r"(:[^:]*){10}$",
+    re.IGNORECASE,
+)
+
+_CPE22_PATTERN = re.compile(r"^cpe:/", re.IGNORECASE)
+
+
+def _is_valid_purl(purl: str) -> bool:
+    if not purl:
+        return False
+    return bool(_PURL_PATTERN.match(purl.strip()))
+
+
+def _is_valid_cpe(cpe: str) -> bool:
+    if not cpe:
+        return False
+    cpe = cpe.strip()
+    return bool(_CPE23_PATTERN.match(cpe) or _CPE22_PATTERN.match(cpe))
+
+
+# ---------------------------------------------------------------------------
+# Strong checksum algorithms (NIST SP 800-107 / SP 800-208)
+# ---------------------------------------------------------------------------
+
+_STRONG_ALGOS: frozenset[str] = frozenset({
+    "SHA-224", "SHA224",
+    "SHA-256", "SHA256",
+    "SHA-384", "SHA384",
+    "SHA-512", "SHA512",
+    "SHA-512/224", "SHA512224",
+    "SHA-512/256", "SHA512256",
+    "SHA3-224", "SHA3_224", "SHA-3-224",
+    "SHA3-256", "SHA3_256", "SHA-3-256",
+    "SHA3-384", "SHA3_384", "SHA-3-384",
+    "SHA3-512", "SHA3_512", "SHA-3-512",
+    "BLAKE2b-256", "BLAKE2B-256",
+    "BLAKE2b-384", "BLAKE2B-384",
+    "BLAKE2b-512", "BLAKE2B-512",
+    "BLAKE3",
+    "STREEBOG-256", "STREEBOG256",
+    "STREEBOG-512", "STREEBOG512",
+})
+
+_WEAK_ALGOS: frozenset[str] = frozenset({
+    "MD5", "MD2", "MD4", "MD6",
+    "SHA-1", "SHA1",
+    "ADLER-32", "ADLER32",
+})
+
+
+def _has_strong_checksum(comp: Component) -> bool:
+    if not comp.hashes:
+        return False
+    for algo in comp.hashes:
+        if algo.upper().replace("-", "").replace("_", "") in {
+            a.upper().replace("-", "").replace("_", "") for a in _STRONG_ALGOS
+        }:
+            return True
+    return False
+
+
+def _has_any_checksum(comp: Component) -> bool:
+    return bool(comp.hashes)
+
+
+# ---------------------------------------------------------------------------
+# Category 1: Structural Validity (weight 10)
+# ---------------------------------------------------------------------------
+
+def _score_structural(doc: SBOMDocument) -> CategoryResult:
+    fmt = (doc.format or "").lower()
+    version = doc.spec_version or ""
+
+    supported_cdx = {"1.4", "1.5", "1.6"}
+    supported_spdx = {"2.2", "2.3", "2.2.1", "2.2.2", "2.3.1"}
+
+    spec_detected = fmt in ("cyclonedx", "spdx")
+    if fmt == "cyclonedx":
+        spec_version_ok = any(version.startswith(v) for v in supported_cdx)
+    elif fmt == "spdx":
+        spec_version_ok = any(version.startswith(v) for v in supported_spdx)
+    else:
+        spec_version_ok = False
+
+    features = [
+        FeatureResult(
+            key="spec_detected",
+            score=_boolean(spec_detected),
+            applicable=True,
+            weight=0.30,
+            detail=f"Format detected: {doc.format or 'unknown'}",
+        ),
+        FeatureResult(
+            key="spec_version_supported",
+            score=_boolean(spec_version_ok),
+            applicable=True,
+            weight=0.30,
+            detail=f"Spec version: {version or 'not declared'}"
+                   + ("" if spec_version_ok else " (not in supported range)"),
+        ),
+        FeatureResult(
+            key="file_format_valid",
+            score=_boolean(spec_detected),
+            applicable=True,
+            weight=0.20,
+            detail="File format matches declared spec",
+        ),
+        FeatureResult(
+            key="schema_valid",
+            score=_boolean(getattr(doc, "schema_valid", True)),
+            applicable=True,
+            weight=0.20,
+            detail="JSON schema validation" + (" passed" if getattr(doc, "schema_valid", True) else " failed"),
+        ),
+    ]
+
+    return CategoryResult(
+        name="Structural Validity",
+        weight=10,
+        score=_category_score(features),
+        features=features,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Category 2: Identity & Traceability (weight 15)
+# ---------------------------------------------------------------------------
+
+def _score_identity(doc: SBOMDocument) -> CategoryResult:
+    comps = doc.components
+    n = len(comps)
+
+    if n == 0:
+        features = [
+            FeatureResult("comp_has_name", 0.0, False, 0.30, "No components"),
+            FeatureResult("comp_has_version", 0.0, False, 0.30, "No components"),
+            FeatureResult("comp_has_purl", 0.0, False, 0.25, "No components"),
+            FeatureResult("comp_has_cpe", 0.0, False, 0.15, "No components"),
+        ]
+        return CategoryResult("Identity & Traceability", 15, 0.0, features)
+
+    has_name = sum(1 for c in comps if c.name and c.name.strip())
+    has_version = sum(1 for c in comps if c.version and c.version.strip())
+    has_purl = sum(1 for c in comps if c.purl and c.purl.strip())
+    has_cpe = sum(1 for c in comps if c.cpe and c.cpe.strip())
+
+    features = [
+        FeatureResult(
+            key="comp_has_name",
+            score=_per_component(has_name, n),
+            applicable=True,
+            weight=0.30,
+            detail=f"{has_name}/{n} components have names",
+        ),
+        FeatureResult(
+            key="comp_has_version",
+            score=_per_component(has_version, n),
+            applicable=True,
+            weight=0.30,
+            detail=f"{has_version}/{n} components have versions",
+        ),
+        FeatureResult(
+            key="comp_has_purl",
+            score=_per_component(has_purl, n),
+            applicable=True,
+            weight=0.25,
+            detail=f"{has_purl}/{n} components have a PURL",
+        ),
+        FeatureResult(
+            key="comp_has_cpe",
+            score=_per_component(has_cpe, n),
+            applicable=True,
+            weight=0.15,
+            detail=f"{has_cpe}/{n} components have a CPE",
+        ),
+    ]
+
+    return CategoryResult("Identity & Traceability", 15, _category_score(features), features)
+
+
+# ---------------------------------------------------------------------------
+# Category 3: Provenance (weight 12)
+# ---------------------------------------------------------------------------
+
+def _score_provenance(doc: SBOMDocument) -> CategoryResult:
+    fmt = (doc.format or "").lower()
+    is_cdx = fmt == "cyclonedx"
+
+    # Timestamp
+    has_ts = bool(doc.created and doc.created.strip())
+
+    # Authors
+    has_authors = bool(doc.authors and any(a.strip() for a in doc.authors))
+
+    # Tool with version — tiered: 0=no tools, 1=tools but no version, 2=name+version
+    tool_tier = 0
+    if doc.tools:
+        for t in doc.tools:
+            if isinstance(t, dict):
+                has_name = bool(t.get("name") or t.get("vendor"))
+                has_ver = bool(t.get("version"))
+            elif isinstance(t, str):
+                has_name = True
+                has_ver = False
+            else:
+                continue
+            if has_name and has_ver:
+                tool_tier = 2
+                break
+            elif has_name:
+                tool_tier = max(tool_tier, 1)
+
+    # Namespace
+    has_namespace = bool(doc.document_namespace and doc.document_namespace.strip())
+
+    # Supplier (CDX-only: metadata.supplier)
+    has_supplier = bool(getattr(doc, "supplier", None))
+
+    # Lifecycle (CDX 1.5+)
+    has_lifecycle = bool(getattr(doc, "lifecycles", None))
+
+    features = [
+        FeatureResult(
+            key="doc_has_creation_timestamp",
+            score=_boolean(has_ts),
+            applicable=True,
+            weight=0.25,
+            detail=f"Creation timestamp: {doc.created or 'missing'}",
+        ),
+        FeatureResult(
+            key="doc_has_authors",
+            score=_boolean(has_authors),
+            applicable=True,
+            weight=0.20,
+            detail=f"Authors/creators: {len(doc.authors or [])} found",
+        ),
+        FeatureResult(
+            key="doc_has_tool_with_version",
+            score=_tiered(tool_tier),
+            applicable=True,
+            weight=0.20,
+            detail=(
+                "Tool with name+version found" if tool_tier == 2
+                else "Tools present but missing versions" if tool_tier == 1
+                else "No tools declared"
+            ),
+        ),
+        FeatureResult(
+            key="doc_has_namespace",
+            score=_boolean(has_namespace),
+            applicable=True,
+            weight=0.20,
+            detail=f"Namespace/serialNumber: {'present' if has_namespace else 'missing'}",
+        ),
+        FeatureResult(
+            key="doc_has_supplier",
+            score=_boolean(has_supplier),
+            applicable=is_cdx,
+            weight=0.10,
+            detail="Document-level supplier: " + ("present" if has_supplier else "missing"),
+        ),
+        FeatureResult(
+            key="doc_has_lifecycle",
+            score=_boolean(has_lifecycle),
+            applicable=is_cdx,
+            weight=0.05,
+            detail="Lifecycle phase: " + ("declared" if has_lifecycle else "not declared"),
+        ),
+    ]
+
+    return CategoryResult("Provenance", 12, _category_score(features), features)
+
+
+# ---------------------------------------------------------------------------
+# Category 4: Integrity (weight 12)
+# ---------------------------------------------------------------------------
+
+def _score_integrity(doc: SBOMDocument) -> CategoryResult:
+    comps = doc.components
+    n = len(comps)
+
+    has_any = sum(1 for c in comps if _has_any_checksum(c))
+    has_strong = sum(1 for c in comps if _has_strong_checksum(c))
+
+    # Document signature: check metadata attribute set by parser
+    sig_tier = 0
+    sig = getattr(doc, "signature", None)
+    if sig:
+        has_material = bool(
+            sig.get("publicKey") or sig.get("certificate") or sig.get("certificates")
+        )
+        sig_tier = 2 if has_material else 1
+
+    if n == 0:
+        comp_features_applicable = False
+        any_score = 0.0
+        strong_score = 0.0
+        any_detail = "No components"
+        strong_detail = "No components"
+    else:
+        comp_features_applicable = True
+        any_score = _per_component(has_any, n)
+        strong_score = _per_component(has_strong, n)
+        any_detail = f"{has_any}/{n} components have any checksum"
+        strong_detail = f"{has_strong}/{n} components have SHA-256+ checksum"
+
+    features = [
+        FeatureResult(
+            key="comp_has_any_checksum",
+            score=any_score,
+            applicable=comp_features_applicable,
+            weight=0.55,
+            detail=any_detail,
+        ),
+        FeatureResult(
+            key="comp_has_strong_checksum",
+            score=strong_score,
+            applicable=comp_features_applicable,
+            weight=0.35,
+            detail=strong_detail,
+        ),
+        FeatureResult(
+            key="doc_has_signature",
+            score=_tiered(sig_tier),
+            applicable=True,
+            weight=0.10,
+            detail=(
+                "Document signature verified" if sig_tier == 2
+                else "Document signature present (no key material)" if sig_tier == 1
+                else "No document signature"
+            ),
+        ),
+    ]
+
+    return CategoryResult("Integrity", 12, _category_score(features), features)
+
+
+# ---------------------------------------------------------------------------
+# Category 5: License Compliance (weight 15)
+# ---------------------------------------------------------------------------
+
+def _score_licensing(doc: SBOMDocument) -> CategoryResult:
+    comps = doc.components
+    n = len(comps)
+    fmt = (doc.format or "").lower()
+    version = doc.spec_version or ""
+    is_cdx16 = fmt == "cyclonedx" and version.startswith("1.6")
+
+    if n == 0:
+        features = [
+            FeatureResult("comp_has_license", 0.0, False, 0.25, "No components"),
+            FeatureResult("comp_has_valid_spdx_license", 0.0, False, 0.25, "No components"),
+            FeatureResult("comp_has_declared_license", 0.0, False, 0.15, "No components"),
+            FeatureResult("comp_no_deprecated_license", 0.0, False, 0.15, "No components"),
+            FeatureResult("comp_no_restrictive_license", 0.0, False, 0.20, "No components"),
+        ]
+        return CategoryResult("License Compliance", 15, 0.0, features)
+
+    has_license = 0
+    has_valid_spdx = 0
+    has_declared = 0
+    no_deprecated = 0
+    no_restrictive = 0
+
+    for comp in comps:
+        lics = comp.licenses or []
+        # Filter out NOASSERTION/NONE
+        real_lics = [l for l in lics if not is_absent(l)]
+
+        if real_lics:
+            has_license += 1
+            if all(is_valid_spdx(l) for l in real_lics):
+                has_valid_spdx += 1
+            if not any(is_deprecated(l) for l in real_lics):
+                no_deprecated += 1
+            if not any(is_restrictive(l) for l in real_lics):
+                no_restrictive += 1
+        else:
+            # No license = not deprecated, but also not restrictive
+            no_deprecated += 1
+            no_restrictive += 1
+
+        # Declared license: CDX 1.6+ acknowledgement=declared
+        # For other formats, check if parser extracted declared_licenses
+        declared = getattr(comp, "declared_licenses", None) or []
+        if declared and any(not is_absent(l) for l in declared):
+            has_declared += 1
+        elif not is_cdx16 and fmt != "cyclonedx":
+            # SPDX: PackageLicenseDeclared field
+            if declared:
+                has_declared += 1
+
+    features = [
+        FeatureResult(
+            key="comp_has_license",
+            score=_per_component(has_license, n),
+            applicable=True,
+            weight=0.25,
+            detail=f"{has_license}/{n} components have license info",
+        ),
+        FeatureResult(
+            key="comp_has_valid_spdx_license",
+            score=_per_component(has_valid_spdx, has_license) if has_license else 0.0,
+            applicable=has_license > 0,
+            weight=0.25,
+            detail=f"{has_valid_spdx}/{has_license} licensed components use valid SPDX IDs",
+        ),
+        FeatureResult(
+            key="comp_has_declared_license",
+            score=_per_component(has_declared, n),
+            applicable=True,
+            weight=0.15,
+            detail=f"{has_declared}/{n} components have declared (upstream) license",
+        ),
+        FeatureResult(
+            key="comp_no_deprecated_license",
+            score=_per_component(no_deprecated, n),
+            applicable=True,
+            weight=0.15,
+            detail=f"{n - no_deprecated}/{n} components use deprecated SPDX IDs",
+        ),
+        FeatureResult(
+            key="comp_no_restrictive_license",
+            score=_per_component(no_restrictive, n),
+            applicable=True,
+            weight=0.20,
+            detail=f"{n - no_restrictive}/{n} components have copyleft/restrictive licenses",
+        ),
+    ]
+
+    return CategoryResult("License Compliance", 15, _category_score(features), features)
+
+
+# ---------------------------------------------------------------------------
+# Category 6: Vulnerability Traceability (weight 16)
+# ---------------------------------------------------------------------------
+
+def _score_vuln_traceability(doc: SBOMDocument) -> CategoryResult:
+    comps = doc.components
+    n = len(comps)
+
+    if n == 0:
+        features = [
+            FeatureResult("comp_purl_syntax_valid", 0.0, False, 0.45, "No components"),
+            FeatureResult("comp_cpe_syntax_valid", 0.0, False, 0.35, "No components"),
+            FeatureResult("comp_has_at_least_one_id", 0.0, False, 0.20, "No components"),
+        ]
+        return CategoryResult("Vulnerability Traceability", 16, 0.0, features)
+
+    valid_purl = sum(1 for c in comps if _is_valid_purl(c.purl or ""))
+    valid_cpe = sum(1 for c in comps if _is_valid_cpe(c.cpe or ""))
+    has_one_id = sum(
+        1 for c in comps
+        if _is_valid_purl(c.purl or "") or _is_valid_cpe(c.cpe or "")
+    )
+
+    # CPE applicable: only score if at least one component has a CPE
+    any_cpe = any(c.cpe for c in comps)
+
+    features = [
+        FeatureResult(
+            key="comp_purl_syntax_valid",
+            score=_per_component(valid_purl, n),
+            applicable=True,
+            weight=0.45,
+            detail=f"{valid_purl}/{n} components have syntactically valid PURLs",
+        ),
+        FeatureResult(
+            key="comp_cpe_syntax_valid",
+            score=_per_component(valid_cpe, n) if any_cpe else 0.0,
+            applicable=any_cpe,
+            weight=0.35,
+            detail=f"{valid_cpe}/{n} components have syntactically valid CPEs"
+                   if any_cpe else "No CPEs present in SBOM",
+        ),
+        FeatureResult(
+            key="comp_has_at_least_one_id",
+            score=_per_component(has_one_id, n),
+            applicable=True,
+            weight=0.20,
+            detail=f"{has_one_id}/{n} components have at least one valid PURL or CPE",
+        ),
+    ]
+
+    return CategoryResult("Vulnerability Traceability", 16, _category_score(features), features)
+
+
+# ---------------------------------------------------------------------------
+# Category 7: Completeness (weight 12)
+# ---------------------------------------------------------------------------
+
+def _score_completeness(doc: SBOMDocument) -> CategoryResult:
+    comps = doc.components
+    n = len(comps)
+    fmt = (doc.format or "").lower()
+
+    # Primary component
+    primary = getattr(doc, "primary_component", None)
+    has_primary = bool(primary)
+
+    # Dependency graph
+    dep_graph = getattr(doc, "dependency_graph", None)
+    has_deps = bool(dep_graph and dep_graph.get("edges"))
+
+    if n == 0:
+        features = [
+            FeatureResult("doc_has_primary_component", _boolean(has_primary), True, 0.25,
+                          "Primary component: " + ("identified" if has_primary else "missing")),
+            FeatureResult("doc_dependency_graph_present", _boolean(has_deps), True, 0.25,
+                          "Dependency graph: " + ("present" if has_deps else "missing")),
+            FeatureResult("comp_has_supplier", 0.0, False, 0.20, "No components"),
+            FeatureResult("comp_has_source_url", 0.0, False, 0.15, "No components"),
+            FeatureResult("comp_has_purpose", 0.0, False, 0.15, "No components"),
+        ]
+        return CategoryResult("Completeness", 12, _category_score(features), features)
+
+    has_supplier = sum(1 for c in comps if c.supplier and c.supplier.strip())
+    has_source = sum(1 for c in comps if _has_source_url(c))
+    has_purpose = sum(1 for c in comps if c.component_type and c.component_type.strip())
+
+    features = [
+        FeatureResult(
+            key="doc_has_primary_component",
+            score=_boolean(has_primary),
+            applicable=True,
+            weight=0.25,
+            detail="Primary component: " + ("identified" if has_primary else "not identified"),
+        ),
+        FeatureResult(
+            key="doc_dependency_graph_present",
+            score=_boolean(has_deps),
+            applicable=True,
+            weight=0.25,
+            detail="Dependency relationships: " + ("declared" if has_deps else "none"),
+        ),
+        FeatureResult(
+            key="comp_has_supplier",
+            score=_per_component(has_supplier, n),
+            applicable=True,
+            weight=0.20,
+            detail=f"{has_supplier}/{n} components have supplier",
+        ),
+        FeatureResult(
+            key="comp_has_source_url",
+            score=_per_component(has_source, n),
+            applicable=True,
+            weight=0.15,
+            detail=f"{has_source}/{n} components have VCS/source URL",
+        ),
+        FeatureResult(
+            key="comp_has_purpose",
+            score=_per_component(has_purpose, n),
+            applicable=True,
+            weight=0.15,
+            detail=f"{has_purpose}/{n} components declare a type/purpose",
+        ),
+    ]
+
+    return CategoryResult("Completeness", 12, _category_score(features), features)
+
+
+def _has_source_url(comp: Component) -> bool:
+    """Check if a component has a VCS or source URL in external references."""
+    ext_refs = getattr(comp, "external_references", []) or []
+    for ref in ext_refs:
+        if isinstance(ref, dict):
+            ref_type = (ref.get("type") or ref.get("referenceType") or "").lower()
+            if ref_type in ("vcs", "source-distribution", "distribution"):
+                return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Main score function
+# ---------------------------------------------------------------------------
+
+def score(doc: SBOMDocument) -> QualityScore:
+    """
+    Compute the full 7-category quality score for an SBOMDocument.
+
+    Returns a QualityScore with per-category breakdowns and an overall score + grade.
+    """
+    categories = [
+        _score_structural(doc),
+        _score_identity(doc),
+        _score_provenance(doc),
+        _score_integrity(doc),
+        _score_licensing(doc),
+        _score_vuln_traceability(doc),
+        _score_completeness(doc),
+    ]
+
+    overall = _overall_score(categories)
+    return QualityScore(
+        overall_score=overall,
+        grade=_grade(overall),
+        categories=categories,
+        sbom_format=doc.format or "unknown",
+        total_components=len(doc.components),
+    )
+
+
+def quality_score_to_dict(qs: QualityScore) -> dict:
+    """Serialize QualityScore to a plain dict for JSON storage."""
+    return {
+        "overall_score": qs.overall_score,
+        "grade": qs.grade,
+        "sbom_format": qs.sbom_format,
+        "total_components": qs.total_components,
+        "categories": [
+            {
+                "name": c.name,
+                "weight": c.weight,
+                "score": c.score,
+                "weighted_score": c.weighted_score,
+                "features": [
+                    {
+                        "key": f.key,
+                        "score": f.score,
+                        "applicable": f.applicable,
+                        "weight": f.weight,
+                        "detail": f.detail,
+                    }
+                    for f in c.features
+                ],
+            }
+            for c in qs.categories
+        ],
+    }

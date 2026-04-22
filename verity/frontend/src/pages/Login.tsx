@@ -1,8 +1,8 @@
-import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Shield } from 'lucide-react'
-import { useMutation } from '@tanstack/react-query'
-import { auth } from '@/lib/api'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { auth, health } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Spinner } from '@/components/ui/Spinner'
@@ -14,6 +14,12 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
 
+  const { data: healthData, isLoading: healthLoading, isFetching: healthFetching } = useQuery({
+    queryKey: ['health'],
+    queryFn: health.get,
+    retry: false,
+  })
+
   const loginMutation = useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       auth.login(email, password),
@@ -24,9 +30,7 @@ export default function Login() {
       navigate('/')
     },
     onError: (err: unknown) => {
-      setFormError(
-        err instanceof Error ? err.message : 'Invalid email or password.',
-      )
+      setFormError(err instanceof Error ? err.message : 'Invalid email or password.')
     },
   })
 
@@ -34,42 +38,48 @@ export default function Login() {
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       auth.register(email, password),
     onSuccess: () => {
-      // After registration, switch to login
       setMode('login')
       setFormError(null)
       setPassword('')
     },
     onError: (err: unknown) => {
-      setFormError(
-        err instanceof Error ? err.message : 'Registration failed. Please try again.',
-      )
+      setFormError(err instanceof Error ? err.message : 'Registration failed. Please try again.')
     },
   })
+
+  useEffect(() => {
+    if (localStorage.getItem('access_token')) {
+      navigate('/', { replace: true })
+      return
+    }
+    // Only redirect away if the health data is settled (not mid-refetch with stale data)
+    if (!healthFetching && healthData && !healthData.authEnabled) {
+      navigate('/', { replace: true })
+    }
+  }, [healthData, healthFetching, navigate])
 
   const isLoading = loginMutation.isPending || registerMutation.isPending
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
-
-    if (!email.trim()) {
-      setFormError('Email is required.')
-      return
-    }
-    if (!password) {
-      setFormError('Password is required.')
-      return
-    }
-
+    if (!email.trim()) { setFormError('Email is required.'); return }
+    if (!password) { setFormError('Password is required.'); return }
     if (mode === 'login') {
       loginMutation.mutate({ email: email.trim(), password })
     } else {
-      if (password.length < 8) {
-        setFormError('Password must be at least 8 characters.')
-        return
-      }
+      if (password.length < 8) { setFormError('Password must be at least 8 characters.'); return }
       registerMutation.mutate({ email: email.trim(), password })
     }
+  }
+
+  // Show spinner while health check is in flight or while redirecting for auth-disabled deployments
+  if (healthLoading || healthFetching || (healthData && !healthData.authEnabled)) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Spinner size={28} />
+      </div>
+    )
   }
 
   return (
@@ -94,10 +104,7 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
-              <label
-                htmlFor="email"
-                className="block text-xs font-display font-bold text-gray-500 mb-1"
-              >
+              <label htmlFor="email" className="block text-xs font-display font-bold text-gray-500 mb-1">
                 Email
               </label>
               <Input
@@ -113,10 +120,7 @@ export default function Login() {
             </div>
 
             <div>
-              <label
-                htmlFor="password"
-                className="block text-xs font-display font-bold text-gray-500 mb-1"
-              >
+              <label htmlFor="password" className="block text-xs font-display font-bold text-gray-500 mb-1">
                 Password
               </label>
               <Input
@@ -139,28 +143,17 @@ export default function Login() {
 
             {registerMutation.isSuccess && mode === 'login' && (
               <div className="rounded-lg bg-green-50 px-4 py-3">
-                <p className="text-sm text-[#93cb52] font-sans">
-                  Account created. Please sign in.
-                </p>
+                <p className="text-sm text-[#93cb52] font-sans">Account created. Please sign in.</p>
               </div>
             )}
 
-            <Button
-              type="submit"
-              size="lg"
-              className="w-full mt-2"
-              disabled={isLoading}
-            >
+            <Button type="submit" size="lg" className="w-full mt-2" disabled={isLoading}>
               {isLoading ? (
                 <>
                   <Spinner size={16} className="text-white" />
                   {mode === 'login' ? 'Signing in...' : 'Creating account...'}
                 </>
-              ) : mode === 'login' ? (
-                'Sign In'
-              ) : (
-                'Create Account'
-              )}
+              ) : mode === 'login' ? 'Sign In' : 'Create Account'}
             </Button>
           </form>
         </div>
@@ -172,10 +165,7 @@ export default function Login() {
               Don't have an account?{' '}
               <button
                 type="button"
-                onClick={() => {
-                  setMode('register')
-                  setFormError(null)
-                }}
+                onClick={() => { setMode('register'); setFormError(null) }}
                 className="text-[#1c9770] font-semibold hover:underline"
               >
                 Sign up
@@ -186,16 +176,24 @@ export default function Login() {
               Already have an account?{' '}
               <button
                 type="button"
-                onClick={() => {
-                  setMode('login')
-                  setFormError(null)
-                }}
+                onClick={() => { setMode('login'); setFormError(null) }}
                 className="text-[#1c9770] font-semibold hover:underline"
               >
                 Sign in
               </button>
             </>
           )}
+        </p>
+
+        {/* Back link — escape hatch if user lands here unintentionally */}
+        <p className="text-center text-xs text-gray-400 font-sans mt-4">
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="hover:underline"
+          >
+            ← Back to Dashboard
+          </button>
         </p>
       </div>
     </div>

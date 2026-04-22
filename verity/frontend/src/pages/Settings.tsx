@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Shield,
-  Database,
+  ScanSearch,
   Key,
   Users,
   Plus,
@@ -10,8 +11,9 @@ import {
   CheckCircle,
   XCircle,
   Info,
+  LogIn,
 } from 'lucide-react'
-import { auth, workspaces, type WorkspaceResponse } from '@/lib/api'
+import { auth, workspaces, siteSettings, type WorkspaceResponse } from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -31,35 +33,50 @@ function SectionDivider({ title, icon: Icon }: { title: string; icon: React.Elem
   )
 }
 
-function InfoRow({
+function Toggle({
+  checked,
+  onChange,
   label,
-  value,
-  badge,
+  description,
+  disabled,
 }: {
+  checked: boolean
+  onChange: (v: boolean) => void
   label: string
-  value?: string
-  badge?: React.ReactNode
+  description: string
+  disabled?: boolean
 }) {
   return (
     <div className="flex items-center justify-between py-3 border-b border-[#e5e7eb] last:border-b-0">
-      <span className="text-sm font-sans text-gray-500">{label}</span>
-      <div className="flex items-center gap-2">
-        {value && <span className="text-sm font-sans font-medium text-[#464646]">{value}</span>}
-        {badge}
+      <div className="flex-1 min-w-0 pr-4">
+        <p className="text-sm font-sans font-medium text-[#464646]">{label}</p>
+        <p className="text-xs text-gray-400 font-sans mt-0.5">{description}</p>
       </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => !disabled && onChange(!checked)}
+        disabled={disabled}
+        className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-[#1c9770] focus:ring-offset-2 ${
+          disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+        } ${checked ? 'bg-[#1c9770]' : 'bg-gray-200'}`}
+      >
+        <span
+          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+            checked ? 'translate-x-4' : 'translate-x-0'
+          }`}
+        />
+      </button>
     </div>
   )
 }
 
-function EnvNote() {
+function InfoRow({ label, badge }: { label: string; badge: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-2 rounded-xl bg-gray-50 border border-[#e5e7eb] px-4 py-3 mt-4">
-      <Info size={14} className="text-gray-400 mt-0.5 flex-shrink-0" />
-      <p className="text-xs text-gray-400 font-sans">
-        These settings are controlled via environment variables or your{' '}
-        <code className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">.env</code> file.
-        Restart the server after making changes.
-      </p>
+    <div className="flex items-center justify-between py-3 border-b border-[#e5e7eb] last:border-b-0">
+      <span className="text-sm font-sans text-gray-500">{label}</span>
+      <div className="flex items-center gap-2">{badge}</div>
     </div>
   )
 }
@@ -108,9 +125,7 @@ function WorkspaceCard({
             {workspace.memberCount} member{workspace.memberCount !== 1 ? 's' : ''}
           </p>
         </div>
-        <Badge variant="info" className="text-xs">
-          Owner
-        </Badge>
+        <Badge variant="info" className="text-xs">Owner</Badge>
       </div>
 
       <div className="flex items-center gap-2">
@@ -121,18 +136,12 @@ function WorkspaceCard({
           onKeyDown={(e) => e.key === 'Enter' && handleInvite()}
           className="flex-1"
         />
-        <Button
-          size="sm"
-          onClick={handleInvite}
-          disabled={inviteLoading || !inviteEmail.trim()}
-        >
+        <Button size="sm" onClick={handleInvite} disabled={inviteLoading || !inviteEmail.trim()}>
           {inviteLoading ? <Spinner size={14} className="text-white" /> : 'Invite'}
         </Button>
       </div>
 
-      {inviteError && (
-        <p className="text-xs text-[#dc2626] font-sans">{inviteError}</p>
-      )}
+      {inviteError && <p className="text-xs text-[#dc2626] font-sans">{inviteError}</p>}
 
       {inviteLink && (
         <div className="flex items-center gap-2 rounded-lg bg-[#bef3e2] px-3 py-2">
@@ -152,14 +161,112 @@ function WorkspaceCard({
 
 export default function Settings() {
   const queryClient = useQueryClient()
-  const [newWorkspaceName, setNewWorkspaceName] = useState('')
-  const [createError, setCreateError] = useState<string | null>(null)
+  const navigate = useNavigate()
 
+  // Per-scan defaults — stored in localStorage, read by NewScan on mount
+  const [vulnCheck, setVulnCheck] = useState(
+    () => localStorage.getItem('pref_vuln_check') !== 'false'
+  )
+  const [saveHistory, setSaveHistory] = useState(
+    () => localStorage.getItem('pref_save_history') !== 'false'
+  )
+
+  const handleVulnCheck = (v: boolean) => {
+    setVulnCheck(v)
+    localStorage.setItem('pref_vuln_check', String(v))
+  }
+  const handleSaveHistory = (v: boolean) => {
+    setSaveHistory(v)
+    localStorage.setItem('pref_save_history', String(v))
+  }
+
+  // Platform settings (server-side)
+  const { data: platformSettings, isLoading: platformLoading } = useQuery({
+    queryKey: ['site-settings'],
+    queryFn: () => siteSettings.get(),
+    retry: false,
+  })
+
+  const [authJustEnabled, setAuthJustEnabled] = useState(false)
+
+  const platformMutation = useMutation({
+    mutationFn: (patch: Parameters<typeof siteSettings.update>[0]) =>
+      siteSettings.update(patch),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(['site-settings'], data)
+
+      if ('auth_enabled' in variables) {
+        if (data.authEnabled) {
+          // Wipe all cached data so Login.tsx fetches a fresh health response
+          // instead of acting on stale auth_enabled=false data.
+          queryClient.clear()
+          navigate('/login')
+        } else {
+          // Auth turned off — clear stored credentials
+          localStorage.removeItem('access_token')
+          localStorage.removeItem('refresh_token')
+          queryClient.invalidateQueries({ queryKey: ['me'] })
+        }
+      }
+    },
+  })
+
+  const handlePlatformToggle = (
+    key: 'auth_enabled' | 'history_enabled' | 'vuln_check_enabled',
+    value: boolean,
+  ) => {
+    if (key === 'auth_enabled' && value) setAuthJustEnabled(true)
+    if (key === 'auth_enabled' && !value) setAuthJustEnabled(false)
+    platformMutation.mutate({ [key]: value })
+  }
+
+  // Auth
   const { data: user } = useQuery({
     queryKey: ['me'],
     queryFn: () => auth.me(),
     retry: false,
   })
+  const isAuthEnabled = Boolean(user)
+
+  // Password change
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+
+  const passwordMutation = useMutation({
+    mutationFn: () => auth.changePassword(currentPassword, newPassword),
+    onSuccess: () => {
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setPasswordError(null)
+    },
+    onError: (err: unknown) => {
+      setPasswordError(err instanceof Error ? err.message : 'Failed to change password.')
+    },
+  })
+
+  const handleChangePassword = () => {
+    setPasswordError(null)
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError('All fields are required.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match.')
+      return
+    }
+    if (newPassword.length < 8) {
+      setPasswordError('Password must be at least 8 characters.')
+      return
+    }
+    passwordMutation.mutate()
+  }
+
+  // Workspaces
+  const [newWorkspaceName, setNewWorkspaceName] = useState('')
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const { data: workspaceList, isLoading: wsLoading } = useQuery({
     queryKey: ['workspaces'],
@@ -184,219 +291,202 @@ export default function Settings() {
     return result.invite_link
   }
 
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [passwordError, setPasswordError] = useState<string | null>(null)
-  const [passwordSuccess, setPasswordSuccess] = useState(false)
-
-  const handleChangePassword = () => {
-    setPasswordError(null)
-    setPasswordSuccess(false)
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      setPasswordError('All fields are required.')
-      return
-    }
-    if (newPassword !== confirmPassword) {
-      setPasswordError('New passwords do not match.')
-      return
-    }
-    if (newPassword.length < 8) {
-      setPasswordError('Password must be at least 8 characters.')
-      return
-    }
-    // Would call password change endpoint here
-    setPasswordSuccess(true)
-    setCurrentPassword('')
-    setNewPassword('')
-    setConfirmPassword('')
-  }
-
-  const isAuthEnabled = Boolean(user)
-
   return (
-    <div className="p-8 max-w-2xl space-y-2">
+    <div className="p-8 max-w-2xl mx-auto space-y-2">
       <div className="mb-6">
         <h1 className="font-display font-bold text-2xl text-[#464646]">Settings</h1>
         <p className="mt-1 text-sm text-gray-400 font-sans">
-          Platform configuration and preferences.
+          Scan preferences and platform configuration.
         </p>
       </div>
 
-      {/* General */}
-      <SectionDivider title="General" icon={Shield} />
+      {/* Per-scan defaults */}
+      <SectionDivider title="Scan Defaults" icon={ScanSearch} />
       <Card>
         <CardContent className="pt-6">
-          <InfoRow label="App version" value="v0.1.0" />
-          <InfoRow
-            label="History"
-            badge={<Badge variant="info">Configured via environment</Badge>}
+          <Toggle
+            checked={vulnCheck}
+            onChange={handleVulnCheck}
+            label="Enable vulnerability check"
+            description="Default for new scans — queries OSV.dev for known CVEs."
           />
-          <InfoRow
-            label="Storage backend"
-            badge={<Badge variant="default">Configured via environment</Badge>}
+          <Toggle
+            checked={saveHistory}
+            onChange={handleSaveHistory}
+            label="Save scans to history"
+            description="Default for new scans — persist results in the History tab."
           />
         </CardContent>
       </Card>
-      <EnvNote />
 
-      {/* Vulnerability Checking */}
-      <SectionDivider title="Vulnerability Checking" icon={Database} />
+      {/* Platform settings */}
+      <SectionDivider title="Platform" icon={Shield} />
       <Card>
         <CardContent className="pt-6">
-          <InfoRow
-            label="OSV.dev"
-            badge={
-              <div className="flex items-center gap-1.5">
-                <CheckCircle size={14} className="text-[#93cb52]" />
-                <span className="text-sm font-sans text-[#93cb52] font-medium">Active</span>
-              </div>
-            }
-          />
-          <InfoRow
-            label="NVD (NIST)"
-            badge={
-              <div className="flex items-center gap-1.5">
-                <Info size={14} className="text-gray-400" />
-                <span className="text-sm font-sans text-gray-400">
-                  Not configured (set NVD_API_KEY)
-                </span>
-              </div>
-            }
-          />
-          <InfoRow
-            label="Vuln check enabled"
-            badge={<Badge variant="info">Default: on per scan</Badge>}
-          />
-        </CardContent>
-      </Card>
-      <EnvNote />
+          {platformLoading ? (
+            <div className="flex items-center gap-2 py-3">
+              <Spinner size={16} />
+              <span className="text-sm text-gray-400 font-sans">Loading…</span>
+            </div>
+          ) : (
+            <>
+              <Toggle
+                checked={platformSettings?.authEnabled ?? false}
+                onChange={(v) => handlePlatformToggle('auth_enabled', v)}
+                label="Authentication"
+                description="Require users to sign in. Disabling removes all login requirements."
+                disabled={platformMutation.isPending}
+              />
+              <Toggle
+                checked={platformSettings?.historyEnabled ?? true}
+                onChange={(v) => handlePlatformToggle('history_enabled', v)}
+                label="History"
+                description="Allow scans to be saved to the History tab platform-wide."
+                disabled={platformMutation.isPending}
+              />
+              <Toggle
+                checked={platformSettings?.vulnCheckEnabled ?? true}
+                onChange={(v) => handlePlatformToggle('vuln_check_enabled', v)}
+                label="Vulnerability checking"
+                description="Allow OSV.dev lookups platform-wide. Overrides per-scan setting."
+                disabled={platformMutation.isPending}
+              />
 
-      {/* Authentication */}
-      <SectionDivider title="Authentication" icon={Key} />
-      <Card>
-        <CardContent className="pt-6">
-          <InfoRow
-            label="Authentication"
-            badge={
-              isAuthEnabled ? (
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle size={14} className="text-[#93cb52]" />
-                  <span className="text-sm font-sans text-[#93cb52] font-medium">Enabled</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <XCircle size={14} className="text-gray-400" />
-                  <span className="text-sm font-sans text-gray-400">Disabled</span>
-                </div>
-              )
-            }
-          />
-          {user && (
-            <InfoRow label="Signed in as" value={user.email} />
-          )}
-          {user && (
-            <InfoRow
-              label="Role"
-              badge={
-                user.isAdmin ? (
-                  <Badge variant="error">Admin</Badge>
-                ) : (
-                  <Badge variant="default">Member</Badge>
-                )
-              }
-            />
+              {/* Account info rows */}
+              {user && (
+                <InfoRow
+                  label="Signed in as"
+                  badge={<span className="text-sm font-sans font-medium text-[#464646]">{user.email}</span>}
+                />
+              )}
+              {user && (
+                <InfoRow
+                  label="Role"
+                  badge={user.isAdmin ? <Badge variant="error">Admin</Badge> : <Badge variant="default">Member</Badge>}
+                />
+              )}
+              <InfoRow
+                label="App version"
+                badge={<span className="text-sm font-sans font-medium text-[#464646]">v0.1.0</span>}
+              />
+            </>
           )}
         </CardContent>
       </Card>
 
-      {isAuthEnabled && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Change Password</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <label className="text-xs font-display font-bold text-gray-500 block mb-1">
-                Current password
-              </label>
-              <Input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-display font-bold text-gray-500 block mb-1">
-                New password
-              </label>
-              <Input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-display font-bold text-gray-500 block mb-1">
-                Confirm new password
-              </label>
-              <Input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                autoComplete="new-password"
-                onKeyDown={(e) => e.key === 'Enter' && handleChangePassword()}
-              />
-            </div>
-
-            {passwordError && (
-              <p className="text-xs text-[#dc2626] font-sans">{passwordError}</p>
-            )}
-            {passwordSuccess && (
-              <p className="text-xs text-[#93cb52] font-sans">Password updated successfully.</p>
-            )}
-
-            <Button size="sm" onClick={handleChangePassword}>
-              Update Password
-            </Button>
-          </CardContent>
-        </Card>
+      {/* Auth just-enabled callout */}
+      {authJustEnabled && (
+        <div className="flex items-start gap-3 rounded-xl bg-[#f7fef9] border border-[#bef3e2] px-4 py-3">
+          <LogIn size={16} className="text-[#1c9770] mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-sans font-medium text-[#1c9770]">Authentication is now enabled.</p>
+            <p className="text-xs text-gray-500 font-sans mt-0.5">
+              Go to{' '}
+              <Link to="/login" className="text-[#1c9770] underline font-semibold">
+                the login page
+              </Link>{' '}
+              to create your first account.
+            </p>
+          </div>
+        </div>
       )}
 
-      {/* Workspace Management */}
+      {/* Auth-disabled info note */}
+      {!authJustEnabled && (
+        <div className="flex items-start gap-2 rounded-xl bg-gray-50 border border-[#e5e7eb] px-4 py-3">
+          <Info size={14} className="text-gray-400 mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-gray-400 font-sans">
+            Platform settings take effect immediately and persist across restarts.
+            They can also be set via environment variables (
+            <code className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">AUTH_ENABLED</code>,{' '}
+            <code className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">HISTORY_ENABLED</code>,{' '}
+            <code className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">VULN_CHECK_ENABLED</code>).
+          </p>
+        </div>
+      )}
+
+      {/* Change Password — only when auth is enabled and user is logged in */}
       {isAuthEnabled && (
         <>
-          <SectionDivider title="Workspace Management" icon={Users} />
-
+          <SectionDivider title="Change Password" icon={Key} />
           <Card>
-            <CardHeader className="flex-row items-center justify-between pb-2">
-              <CardTitle className="text-base">Workspaces</CardTitle>
-            </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6 space-y-3">
+              <div>
+                <label className="text-xs font-display font-bold text-gray-500 block mb-1">
+                  Current password
+                </label>
+                <Input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-display font-bold text-gray-500 block mb-1">
+                  New password
+                </label>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-display font-bold text-gray-500 block mb-1">
+                  Confirm new password
+                </label>
+                <Input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                  onKeyDown={(e) => e.key === 'Enter' && handleChangePassword()}
+                />
+              </div>
+
+              {passwordError && (
+                <p className="text-xs text-[#dc2626] font-sans">{passwordError}</p>
+              )}
+              {passwordMutation.isSuccess && (
+                <p className="text-xs text-[#93cb52] font-sans">Password updated successfully.</p>
+              )}
+
+              <Button
+                size="sm"
+                onClick={handleChangePassword}
+                disabled={passwordMutation.isPending}
+              >
+                {passwordMutation.isPending ? <Spinner size={14} className="text-white" /> : null}
+                Update Password
+              </Button>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {/* Workspaces — only when auth is enabled and user is logged in */}
+      {isAuthEnabled && (
+        <>
+          <SectionDivider title="Workspaces" icon={Users} />
+          <Card>
+            <CardContent className="pt-6">
               {wsLoading ? (
                 <div className="flex items-center gap-2 py-4">
                   <Spinner size={16} />
                   <span className="text-sm text-gray-400 font-sans">Loading workspaces...</span>
                 </div>
               ) : !workspaceList || workspaceList.length === 0 ? (
-                <p className="text-sm text-gray-400 font-sans py-2">
-                  No workspaces yet.
-                </p>
+                <p className="text-sm text-gray-400 font-sans py-2">No workspaces yet.</p>
               ) : (
                 <div className="space-y-3">
                   {workspaceList.map((ws) => (
-                    <WorkspaceCard
-                      key={ws.id}
-                      workspace={ws}
-                      onInvite={handleInvite}
-                    />
+                    <WorkspaceCard key={ws.id} workspace={ws} onInvite={handleInvite} />
                   ))}
                 </div>
               )}
 
-              {/* Create workspace */}
               <div className="mt-4 pt-4 border-t border-[#e5e7eb]">
                 <p className="text-xs font-display font-bold text-gray-500 mb-2">
                   Create new workspace
@@ -415,13 +505,9 @@ export default function Settings() {
                   <Button
                     size="sm"
                     onClick={() => {
-                      if (newWorkspaceName.trim()) {
-                        createWorkspaceMutation.mutate(newWorkspaceName.trim())
-                      }
+                      if (newWorkspaceName.trim()) createWorkspaceMutation.mutate(newWorkspaceName.trim())
                     }}
-                    disabled={
-                      createWorkspaceMutation.isPending || !newWorkspaceName.trim()
-                    }
+                    disabled={createWorkspaceMutation.isPending || !newWorkspaceName.trim()}
                   >
                     {createWorkspaceMutation.isPending ? (
                       <Spinner size={14} className="text-white" />

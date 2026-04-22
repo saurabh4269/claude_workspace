@@ -1,14 +1,13 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Plus, FileText, TrendingUp, ShieldCheck, AlertTriangle } from 'lucide-react'
+import { Plus, FileText, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { scans, type ScanSummary } from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { RiskBadge } from '@/components/RiskBadge'
-import { RiskChart } from '@/components/RiskChart'
 import { Badge } from '@/components/ui/Badge'
-import { formatDate, formatScore } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 
 function StatCardSkeleton() {
   return (
@@ -78,12 +77,16 @@ export default function Dashboard() {
   const ntiaCompliant = items.length
     ? Math.round((items.filter((s) => s.ntiaCompliant).length / items.length) * 100)
     : 0
-  const avgScore =
-    items.length > 0
-      ? items.reduce((sum, s) => sum + s.riskScore, 0) / items.length
-      : 0
+  const highCriticalCount = items.filter(
+    (s) => s.riskLevel === 'HIGH' || s.riskLevel === 'CRITICAL',
+  ).length
 
-  const highCriticalComponents = items.flatMap(() => []).slice(0, 0) // placeholder
+  const levelCounts = {
+    LOW: items.filter((s) => s.riskLevel === 'LOW').length,
+    MEDIUM: items.filter((s) => s.riskLevel === 'MEDIUM').length,
+    HIGH: items.filter((s) => s.riskLevel === 'HIGH').length,
+    CRITICAL: items.filter((s) => s.riskLevel === 'CRITICAL').length,
+  }
 
   if (isLoading) {
     return (
@@ -165,11 +168,11 @@ export default function Dashboard() {
           sub="of recent scans"
         />
         <StatCard
-          label="Avg Risk Score"
-          value={formatScore(avgScore)}
-          icon={TrendingUp}
-          iconColor="bg-[#f59e0b]"
-          sub="out of 100"
+          label="High / Critical Scans"
+          value={highCriticalCount}
+          icon={AlertTriangle}
+          iconColor="bg-[#dc2626]"
+          sub="requiring attention"
         />
       </div>
 
@@ -177,10 +180,37 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Risk Score Trend</CardTitle>
+            <CardTitle>Risk Level Breakdown</CardTitle>
           </CardHeader>
           <CardContent>
-            <RiskChart scans={items} mode="trend" />
+            <div className="space-y-3">
+              {(
+                [
+                  { level: 'CRITICAL', color: 'bg-[#dc2626]', text: 'text-[#dc2626]' },
+                  { level: 'HIGH', color: 'bg-[#f97316]', text: 'text-[#f97316]' },
+                  { level: 'MEDIUM', color: 'bg-[#f59e0b]', text: 'text-[#f59e0b]' },
+                  { level: 'LOW', color: 'bg-[#93cb52]', text: 'text-[#93cb52]' },
+                ] as const
+              ).map(({ level, color, text }) => {
+                const count = levelCounts[level]
+                const pct = items.length > 0 ? (count / items.length) * 100 : 0
+                return (
+                  <div key={level} className="flex items-center gap-3">
+                    <span className={`w-16 text-xs font-display font-bold ${text}`}>{level}</span>
+                    <div className="flex-1 h-2 rounded-full bg-gray-100">
+                      <div
+                        className={`h-2 rounded-full ${color} transition-all`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="w-6 text-right text-xs font-sans text-gray-400">{count}</span>
+                  </div>
+                )
+              })}
+              {items.length === 0 && (
+                <p className="text-sm text-gray-400 font-sans text-center py-4">No scans yet</p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -253,9 +283,6 @@ export default function Dashboard() {
                       </p>
                     </div>
                     <RiskBadge level={scan.riskLevel} />
-                    <span className="text-sm font-display font-bold text-[#464646]">
-                      {formatScore(scan.riskScore)}
-                    </span>
                   </div>
                 ))}
             </div>

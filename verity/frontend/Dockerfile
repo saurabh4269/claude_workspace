@@ -29,6 +29,7 @@ RUN printf 'server {\n\
     listen 80;\n\
     root /usr/share/nginx/html;\n\
     index index.html;\n\
+    client_max_body_size 52m;\n\
     gzip on;\n\
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;\n\
     location / {\n\
