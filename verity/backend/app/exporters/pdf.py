@@ -352,7 +352,11 @@ def _build_compliance_section(scan: dict) -> str:
         else:
             ok = score >= 8.0
             partial = (not ok) and score >= 5.0
-            detail = f"Score {score:.1f}/10"
+            raw_score = std.get("raw_score")
+            if raw_score is not None and raw_score > score:
+                detail = f"Score {score:.1f}/10 (raw {raw_score:.1f}, capped)"
+            else:
+                detail = f"Score {score:.1f}/10"
 
         rows += (
             f'<tr style="background:{_TEAL_LIGHT};">'
@@ -722,6 +726,82 @@ def _build_issues_section(scan: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Compliance profile section
+# ---------------------------------------------------------------------------
+
+def _build_profile_section(scan: dict) -> str:
+    ps = scan.get("profile_score") or {}
+    if not ps:
+        return ""
+
+    profile_name = _esc(ps.get("profile_name", ""))
+    profile_score = float(ps.get("profile_score", 0.0))
+    grade = ps.get("grade") or ""
+    grade_color = _GRADE_PALETTE.get(grade, _GRAY)
+    features = ps.get("features") or []
+
+    applicable = [f for f in features if f.get("applicable")]
+    na_features = [f for f in features if not f.get("applicable")]
+
+    rows = ""
+    for f in applicable:
+        fkey = _esc(f.get("key", ""))
+        fscore = f.get("score")
+        fweight = float(f.get("weight", 0.0))
+        fdetail = _esc(f.get("detail", ""))
+        if fscore is None:
+            icon, icon_color, score_str = "–", _GRAY_LIGHT, "N/A"
+        elif fscore >= 10:
+            icon, icon_color, score_str = "✓", "#93cb52", f"{fscore:.1f}"
+        elif fscore > 0:
+            icon, icon_color, score_str = "~", "#6b7280", f"{fscore:.1f}"
+        else:
+            icon, icon_color, score_str = "✗", "#dc2626", f"{fscore:.1f}"
+        rows += (
+            f'<tr>'
+            f'<td style="padding-left:6px;font-size:0.85em;">'
+            f'<span style="color:{icon_color};font-weight:700;">{icon}</span>&nbsp;'
+            f'<span style="font-family:monospace;">{fkey}</span>'
+            f'</td>'
+            f'<td style="text-align:center;font-size:0.85em;color:{_GRAY_LIGHT};">{fweight:.2f}</td>'
+            f'<td style="text-align:center;font-size:0.85em;color:{icon_color};font-weight:700;">{score_str}</td>'
+            f'<td style="font-size:0.82em;color:{_GRAY_LIGHT};">{fdetail}</td>'
+            f'</tr>\n'
+        )
+
+    na_note = ""
+    if na_features:
+        na_keys = ", ".join(_esc(f.get("key", "")) for f in na_features)
+        na_note = (
+            f'<p style="font-size:0.82em;color:{_GRAY_LIGHT};margin-top:6px;">'
+            f'Not applicable for this SBOM format: <span style="font-family:monospace;">{na_keys}</span></p>'
+        )
+
+    return f"""
+    {_section(f"Profile Score: {profile_name}")}
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+      <div style="font-size:3em;font-weight:900;color:{grade_color};line-height:1;">{_esc(grade)}</div>
+      <div>
+        <div style="font-size:1.4em;font-weight:700;color:{_GRAY};">{profile_score:.1f}<span style="font-size:0.6em;color:{_GRAY_LIGHT};"> / 10</span></div>
+        <div style="font-size:0.8em;color:{_GRAY_LIGHT};">{profile_name} Profile Score</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th style="width:60px;text-align:center;">Weight</th>
+          <th style="width:60px;text-align:center;">Score</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </table>
+    {na_note}
+"""
+
+
+# ---------------------------------------------------------------------------
 # Main HTML builder
 # ---------------------------------------------------------------------------
 
@@ -730,6 +810,7 @@ def _build_html(scan: dict) -> str:
 
     cover = _build_cover(scan)
     quality_section = _build_quality_section(scan)
+    profile_section = _build_profile_section(scan)
     compliance_section = _build_compliance_section(scan)
     vuln_section = _build_vulnerability_section(scan)
     component_section = _build_component_section(scan)
@@ -893,6 +974,7 @@ def _build_html(scan: dict) -> str:
 {cover}
 <div class="content">
 {quality_section}
+{profile_section}
 {compliance_section}
 {vuln_section}
 {component_section}
