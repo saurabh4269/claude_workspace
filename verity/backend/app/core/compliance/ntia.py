@@ -112,19 +112,32 @@ def check_ntia(doc: SBOMDocument) -> NTIAResult:
     # -----------------------------------------------------------------------
     dep_graph = getattr(doc, "dependency_graph", None) or {}
     has_deps = bool(dep_graph.get("edges"))
-    dep_score = 10.0 if has_deps else 0.0
+    # Fallback: a completeness declaration (CDX compositions or is_complete flag)
+    # satisfies the NTIA requirement even with zero explicit edges, because the
+    # producer is asserting that all dependencies are accounted for.
+    compositions = getattr(doc, "compositions", []) or []
+    completeness_declared = dep_graph.get("is_complete", False) or bool(compositions)
+    dep_compliant = has_deps or completeness_declared
+    dep_score = 10.0 if dep_compliant else 0.0
+    dep_detail = (
+        f"{len(dep_graph.get('edges', []))} dependency edges declared"
+        if has_deps
+        else "Completeness declared — no explicit edges required"
+        if completeness_declared
+        else "No dependency relationships declared"
+    )
     records.append(_req(
         "sbom_dependencies", dep_score, "document",
         f"{len(dep_graph.get('edges', []))} dependency edges",
-        "At least one dependency relationship declared",
-        "Dependency relationships found" if has_deps else "No dependency relationships declared",
+        "Dependency relationships or completeness declaration",
+        dep_detail,
     ))
     elements.append(NTIAElementResult(
         element_name="Dependency Relationships",
-        compliant=has_deps,
+        compliant=dep_compliant,
         score=dep_score,
         failing_components=[],
-        detail=f"{len(dep_graph.get('edges', []))} dependency edges declared",
+        detail=dep_detail,
     ))
 
     # -----------------------------------------------------------------------

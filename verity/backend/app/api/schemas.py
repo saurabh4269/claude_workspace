@@ -210,6 +210,7 @@ class BSIResultOut(BaseModel):
 class FSCTResultOut(BaseModel):
     standard: str = "FSCT v3"
     overall_score: float
+    raw_score: Optional[float] = None
     records: list[ComplianceRecordOut] = Field(default_factory=list)
 
 
@@ -269,6 +270,21 @@ class ScanOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProfileFeatureOut(BaseModel):
+    key: str
+    score: Optional[float] = None
+    applicable: bool
+    weight: float
+    detail: str
+
+
+class ProfileScoreOut(BaseModel):
+    profile_name: str
+    profile_score: float
+    grade: str
+    features: list[ProfileFeatureOut] = Field(default_factory=list)
+
+
 class ScanDetailOut(ScanOut):
     components: list[ComponentOut] = Field(default_factory=list)
     validation_issues: list[ValidationIssueOut] = Field(default_factory=list)
@@ -276,6 +292,7 @@ class ScanDetailOut(ScanOut):
     compliance: Optional[ComplianceSummaryOut] = None
     dependency_graph: Optional[DependencyGraphOut] = None
     policy_result: Optional[PolicyResultOut] = None
+    profile_score: Optional[ProfileScoreOut] = None
 
 
 class ScanListOut(BaseModel):

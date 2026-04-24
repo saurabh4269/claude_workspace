@@ -205,6 +205,11 @@ export function CompliancePanel({ compliance }: Props) {
           name={compliance.fsct.standard ?? 'FSCT v3'}
           score={compliance.fsct.overallScore}
           pass={compliance.fsct.overallScore >= 8.0}
+          note={
+            compliance.fsct.rawScore != null && compliance.fsct.rawScore > compliance.fsct.overallScore
+              ? `Raw ${compliance.fsct.rawScore.toFixed(1)} (capped at 10.0)`
+              : undefined
+          }
           records={compliance.fsct.records}
         />
       )}

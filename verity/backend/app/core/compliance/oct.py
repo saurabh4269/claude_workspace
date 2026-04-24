@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from app.core.parser import SBOMDocument
 from app.core.compliance.record import (
-    ComplianceRecord, RecordTier, compliance_score, _req,
+    ComplianceRecord, RecordTier, compliance_score, _req, _add,
 )
 from app.core.licenses.spdx_db import is_absent
 
@@ -59,6 +59,14 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
     records.append(_req("oct_created_timestamp", 10.0 if has_ts else 0.0, "document",
                         doc.created or "", "RFC3339 timestamp", ""))
 
+    # SPDXRef-DOCUMENT: the document element must carry this exact identifier
+    spdx_doc_id = getattr(doc, "spdx_id", "") or getattr(doc, "document_namespace", "")
+    has_doc_spdxid = bool(spdx_doc_id) and "SPDXRef-DOCUMENT" in spdx_doc_id
+    records.append(_req("oct_sbom_spdxid", 10.0 if has_doc_spdxid else 0.0, "document",
+                        spdx_doc_id or "",
+                        "SPDXRef-DOCUMENT identifier on document element",
+                        "SPDXRef-DOCUMENT found" if has_doc_spdxid else "SPDXRef-DOCUMENT not found"))
+
     has_ns = bool(doc.document_namespace and doc.document_namespace.strip())
     records.append(_req("oct_namespace", 10.0 if has_ns else 0.0, "document",
                         doc.document_namespace or "", "Document namespace URI", ""))
@@ -67,13 +75,32 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
     records.append(_req("oct_doc_name", 10.0 if doc_name else 0.0, "document",
                         doc_name, "Document name", ""))
 
-    # Authors / creator info
+    # Document comment
+    doc_comment = getattr(doc, "document_comment", None) or ""
+    has_comment = bool(doc_comment.strip())
+    records.append(_req("oct_sbom_comment", 10.0 if has_comment else 0.0, "document",
+                        doc_comment[:80] if doc_comment else "",
+                        "DocumentComment present",
+                        "Comment present" if has_comment else "No DocumentComment"))
+
+    # Organisation and tool as separate checks (OCT §3 requires both)
+    creators = doc.authors or []
     has_org = any(
-        "organization" in (a or "").lower() or "@" in (a or "") or "tool" in (a or "").lower()
-        for a in (doc.authors or [])
+        "organization" in (a or "").lower() or a.startswith("Organization:")
+        for a in creators
+    )
+    records.append(_req("oct_sbom_organization", 10.0 if has_org else 0.0, "document",
+                        str(creators), "Organization: entry in Creator field",
+                        "Organization creator found" if has_org else "No Organization: in Creator"))
+
+    has_tool_creator = any(
+        "tool" in (a or "").lower() or a.startswith("Tool:")
+        for a in creators
     ) or bool(doc.tools)
-    records.append(_req("oct_creator", 10.0 if has_org else 0.0, "document",
-                        str(doc.authors or []), "Organization or tool in creator", ""))
+    records.append(_req("oct_sbom_tool", 10.0 if has_tool_creator else 0.0, "document",
+                        str(doc.tools or creators),
+                        "Tool: entry in Creator field",
+                        "Tool creator found" if has_tool_creator else "No Tool: in Creator"))
 
     # Data license
     data_license = getattr(doc, "data_license", None) or ""
@@ -87,6 +114,24 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
     records.append(_req("oct_machine_format", 10.0 if machine_readable else 0.0, "document",
                         file_fmt, "JSON or Tag-Value format",
                         f"File format: {file_fmt}"))
+
+    # Human-readable format: OCT requires the SBOM to be available in a
+    # human-readable form (same condition as machine-readable for SPDX)
+    records.append(_req("oct_human_format", 10.0 if machine_readable else 0.0, "document",
+                        file_fmt, "Human-readable format (JSON or Tag-Value)",
+                        f"File format {file_fmt} is human-readable" if machine_readable
+                        else f"Format '{file_fmt}' may not be human-readable"))
+
+    # Delivery method, timing, scope — no corresponding SPDX fields;
+    # recorded as ADDITIONAL with score 5.0 (unspecified, not a failure)
+    for check_key, label in (
+        ("oct_delivery_method", "Delivery method"),
+        ("oct_delivery_timing", "Delivery timing"),
+        ("oct_sbom_scope", "SBOM scope"),
+    ):
+        records.append(_add(check_key, 5.0, False, "document", "unspecified",
+                            f"{label} (no SPDX field)",
+                            f"{label}: no corresponding SPDX field — recorded as unspecified"))
 
     # Per-component checks
     for comp in doc.components:
@@ -124,11 +169,12 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
         records.append(_req("oct_pkg_download_url", 10.0 if has_dl else 0.0,
                             cid, download_url, "Download URL", ""))
 
-        # SHA-256 checksum
+        # SHA-256 checksum — normalise algorithm name before matching
         has_sha256 = False
         if comp.hashes:
             for algo in comp.hashes:
-                if "256" in algo:
+                norm_algo = algo.upper().replace("-", "").replace("_", "").replace(" ", "")
+                if norm_algo in ("SHA256", "SHA3256"):
                     has_sha256 = True
         records.append(_req("oct_pkg_hash", 10.0 if has_sha256 else 0.0,
                             cid, str(list(comp.hashes.keys()) if comp.hashes else []),

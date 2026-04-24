@@ -163,6 +163,7 @@ class Scan(Base):
     _fsct_result: Mapped[str | None] = mapped_column("fsct_result", Text, nullable=True)
     _oct_result: Mapped[str | None] = mapped_column("oct_result", Text, nullable=True)
     _policy_result: Mapped[str | None] = mapped_column("policy_result", Text, nullable=True)
+    _profile_result: Mapped[str | None] = mapped_column("profile_result", Text, nullable=True)
 
     # Relationships
     user: Mapped["User | None"] = relationship("User", back_populates="scans")
@@ -257,6 +258,14 @@ class Scan(Base):
     @policy_result.setter
     def policy_result(self, value) -> None:
         self._set_json("_policy_result", value)
+
+    @property
+    def profile_result(self) -> dict | None:
+        return self._get_json("_profile_result")
+
+    @profile_result.setter
+    def profile_result(self, value) -> None:
+        self._set_json("_profile_result", value)
 
 
 class ScanComponent(Base):

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from app.core.parser import SBOMDocument, Component
 from app.core.compliance.record import (
-    ComplianceRecord, RecordTier, compliance_score, _req, _add,
+    ComplianceRecord, RecordTier, compliance_score, raw_compliance_score, _req, _add,
 )
 from app.core.scorer import _is_valid_purl, _is_valid_cpe, _has_strong_checksum, _has_source_url
 from app.core.licenses.spdx_db import is_valid_spdx, is_absent
@@ -48,13 +48,15 @@ def _has_alternative_unique_id(comp: "Component") -> bool:
 
 @dataclass
 class FSCTResult:
-    overall_score: float
+    overall_score: float       # clamped 0.0–10.0
+    raw_score: float           # unclamped; >10.0 signals aspirational achievements
     records: list[ComplianceRecord]
 
     def to_dict(self) -> dict:
         return {
             "standard": "FSCT v3",
             "overall_score": self.overall_score,
+            "raw_score": self.raw_score,
             "records": [r.to_dict() for r in self.records],
         }
 
@@ -146,15 +148,20 @@ def check_fsct(doc: SBOMDocument) -> FSCTResult:
         records.append(_req("fsct_comp_uniq_id", 10.0 if has_id else 0.0,
                             cid, id_found, "PURL, CPE, SWHID, SWID, or OmniBOR", ""))
 
-        # Checksum: 0=none, 10=weak, 12=strong (cap at 10 for denominator)
+        # Checksum: 0=none, 10=weak/minimum, 12=strong/recommended (FSCT tier model)
         has_any_hash = bool(comp.hashes)
         has_strong = _has_strong_checksum(comp)
-        hash_score = 10.0 if has_any_hash else 0.0
+        if has_strong:
+            hash_score = 12.0   # meets FSCT recommended practice
+        elif has_any_hash:
+            hash_score = 10.0   # meets minimum only
+        else:
+            hash_score = 0.0
         records.append(_req("fsct_comp_checksum", hash_score, cid,
                             str(list(comp.hashes.keys()) if comp.hashes else []),
-                            "Any checksum (strong preferred)",
-                            "Strong checksum" if has_strong
-                            else "Weak checksum (SHA-1/MD5)" if has_any_hash
+                            "Any checksum (strong hash preferred)",
+                            "Strong checksum (SHA-256+) — recommended" if has_strong
+                            else "Weak checksum (SHA-1/MD5) — minimum only" if has_any_hash
                             else "No checksum"))
 
         # License: 0=none, partial=5, SPDX=10
@@ -180,4 +187,5 @@ def check_fsct(doc: SBOMDocument) -> FSCTResult:
                             cid, copyright_text, "Copyright text", ""))
 
     overall = compliance_score(records)
-    return FSCTResult(overall_score=overall, records=records)
+    raw = raw_compliance_score(records)
+    return FSCTResult(overall_score=overall, raw_score=raw, records=records)

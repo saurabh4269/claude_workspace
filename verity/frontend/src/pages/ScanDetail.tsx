@@ -10,7 +10,7 @@ import { CompliancePanel } from '@/components/CompliancePanel'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import type { QualityScore, NTIAResult, FeatureResult, PolicyResult, DependencyGraph } from '@/lib/api'
+import type { QualityScore, NTIAResult, FeatureResult, PolicyResult, DependencyGraph, ProfileScore } from '@/lib/api'
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -115,6 +115,62 @@ function CategoryRow({ cat }: { cat: { name: string; score: number; weight: numb
         <div className="ml-5 mb-2 pl-3 border-l border-gray-100">
           {applicableFeatures.map(f => <FeatureRow key={f.key} f={f} />)}
         </div>
+      )}
+    </div>
+  )
+}
+
+function ProfileScorePanel({ ps }: { ps: ProfileScore }) {
+  const applicable = ps.features.filter(f => f.applicable)
+  const na = ps.features.filter(f => !f.applicable)
+  return (
+    <div>
+      <SectionLabel>Profile Score — {ps.profileName}</SectionLabel>
+      <div className="flex items-end gap-4 mb-6">
+        <span className={cn('text-6xl font-display font-bold leading-none', gradeColor(ps.grade))}>
+          {ps.grade}
+        </span>
+        <div className="pb-1">
+          <span className="text-2xl font-display font-bold text-[#464646]">{ps.profileScore.toFixed(1)}</span>
+          <span className="text-base text-gray-400 font-sans"> / 10</span>
+        </div>
+      </div>
+      <p className="text-[12px] text-gray-400 font-sans mb-4">
+        Profile score uses only the features relevant to this standard. N/A features are excluded from the denominator.
+      </p>
+      <div className="border border-gray-100 rounded-xl overflow-hidden mb-4">
+        {applicable.map((f) => {
+          const pass = (f.score ?? 0) >= 10
+          const partial = (f.score ?? 0) > 0 && (f.score ?? 0) < 10
+          return (
+            <div key={f.key} className="flex items-start gap-3 px-4 py-2.5 border-b border-gray-50 last:border-b-0">
+              {pass
+                ? <Check size={13} strokeWidth={2.5} className="text-[#93cb52] shrink-0 mt-0.5" />
+                : partial
+                  ? <Minus size={13} strokeWidth={2.5} className="text-[#6b7280] shrink-0 mt-0.5" />
+                  : <XIcon size={13} strokeWidth={2.5} className="text-[#dc2626] shrink-0 mt-0.5" />
+              }
+              <div className="flex-1 min-w-0">
+                <span className="text-[13px] font-mono text-[#464646]">{f.key}</span>
+                {f.detail && <p className="text-[12px] text-gray-400 mt-0.5">{f.detail}</p>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] text-gray-400 font-sans">w={f.weight.toFixed(2)}</span>
+                <span className={cn(
+                  'text-[12px] font-display font-bold w-8 text-right',
+                  pass ? 'text-[#93cb52]' : partial ? 'text-[#6b7280]' : 'text-[#dc2626]'
+                )}>
+                  {f.score != null ? f.score.toFixed(1) : '—'}
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {na.length > 0 && (
+        <p className="text-[12px] text-gray-400 font-sans">
+          {na.length} feature{na.length !== 1 ? 's' : ''} not applicable for this SBOM format: {na.map(f => f.key).join(', ')}
+        </p>
       )}
     </div>
   )
@@ -557,6 +613,11 @@ export default function ScanDetail() {
               Compliance
             </Tabs.Trigger>
           )}
+          {data.profileScore && (
+            <Tabs.Trigger value="profile" className={TAB_TRIGGER_CLASS}>
+              Profile
+            </Tabs.Trigger>
+          )}
           {data.policyResult && (
             <Tabs.Trigger value="policy" className={TAB_TRIGGER_CLASS}>
               Policy
@@ -617,6 +678,13 @@ export default function ScanDetail() {
         {data.compliance && (
           <Tabs.Content value="compliance" className="pt-8">
             <CompliancePanel compliance={data.compliance} />
+          </Tabs.Content>
+        )}
+
+        {/* Profile tab */}
+        {data.profileScore && (
+          <Tabs.Content value="profile" className="pt-8">
+            <ProfileScorePanel ps={data.profileScore} />
           </Tabs.Content>
         )}
 

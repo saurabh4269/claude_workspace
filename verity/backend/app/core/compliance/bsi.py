@@ -99,7 +99,11 @@ def _dep_resolution_ok(doc: SBOMDocument) -> tuple[float, str]:
     """
     graph = getattr(doc, "dependency_graph", None) or {}
     edges = graph.get("edges", [])
+    # Build node set from graph AND from all component bom-refs/names so that
+    # a partially-populated graph["nodes"] list does not produce false positives.
     nodes = set(graph.get("nodes", []))
+    nodes.update(c.bom_ref for c in doc.components if c.bom_ref)
+    nodes.update(c.name for c in doc.components if c.name)
     if not edges:
         return 0.0, "No dependency relationships declared"
     broken = []
@@ -131,11 +135,11 @@ def _check_bsi_v11(doc: SBOMDocument) -> list[ComplianceRecord]:
         version_ok = any(version.startswith(v) for v in ("1.4", "1.5", "1.6"))
         expected = "CycloneDX >= 1.4"
     elif fmt == "spdx":
-        version_ok = any(version.startswith(v) for v in ("2.3",))
-        expected = "SPDX >= 2.3"
+        version_ok = any(version.startswith(v) for v in ("2.2", "2.3", "3."))
+        expected = "SPDX >= 2.2"
     else:
         version_ok = False
-        expected = "CycloneDX >= 1.4 or SPDX >= 2.3"
+        expected = "CycloneDX >= 1.4 or SPDX >= 2.2"
     records.append(_req("bsi_spec_version", 10.0 if version_ok else 0.0, "document",
                         version, expected,
                         f"Spec version {version}: {'OK' if version_ok else 'below minimum'}"))

@@ -39,12 +39,10 @@ class ComplianceRecord:
         }
 
 
-def compliance_score(records: list[ComplianceRecord]) -> float:
+def raw_compliance_score(records: list[ComplianceRecord]) -> float:
     """
-    Compute compliance score as a fraction (0.0–10.0) of passing records.
-
-    Only REQUIRED records are always included. ADDITIONAL records are included
-    only when applicable=True. OPTIONAL records are never included.
+    Arithmetic mean of all scored records — may exceed 10.0 for standards
+    (e.g. FSCT) that award aspirational scores above 10.
     """
     scored = [
         r for r in records
@@ -53,6 +51,18 @@ def compliance_score(records: list[ComplianceRecord]) -> float:
     if not scored:
         return 0.0
     return round(sum(r.score for r in scored) / len(scored), 2)
+
+
+def compliance_score(records: list[ComplianceRecord]) -> float:
+    """
+    Compliance score clamped to 0.0–10.0.
+
+    Only REQUIRED records are always included. ADDITIONAL records are included
+    only when applicable=True. OPTIONAL records are never included.
+    Use raw_compliance_score() to obtain the unclamped value (useful for
+    standards that award aspirational scores above 10.0).
+    """
+    return min(raw_compliance_score(records), 10.0)
 
 
 def _req(

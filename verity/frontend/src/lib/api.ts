@@ -9,6 +9,7 @@ export interface ScanOptions {
   saveToHistory: boolean
   workspaceId?: string
   runCompliance?: boolean
+  profile?: string
 }
 
 export interface ScanListParams {
@@ -116,6 +117,7 @@ export interface BSIResult {
 export interface FSCTResult {
   standard: string
   overallScore: number
+  rawScore?: number
   records: ComplianceRecord[]
 }
 
@@ -175,6 +177,21 @@ export interface ScanSummary {
   qualityGrade?: string
 }
 
+export interface ProfileFeature {
+  key: string
+  score?: number | null
+  applicable: boolean
+  weight: number
+  detail: string
+}
+
+export interface ProfileScore {
+  profileName: string
+  profileScore: number
+  grade: string
+  features: ProfileFeature[]
+}
+
 export interface ScanDetail extends ScanSummary {
   components: Component[]
   validationIssues: ValidationIssue[]
@@ -182,6 +199,7 @@ export interface ScanDetail extends ScanSummary {
   compliance?: ComplianceSummary
   dependencyGraph?: DependencyGraph
   policyResult?: PolicyResult
+  profileScore?: ProfileScore
 }
 
 export interface ScanListResponse {
@@ -337,6 +355,7 @@ export const scans = {
     formData.append('save_to_history', String(opts.saveToHistory))
     formData.append('run_compliance', String(opts.runCompliance ?? true))
     if (opts.workspaceId) formData.append('workspace_id', opts.workspaceId)
+    if (opts.profile) formData.append('profile', opts.profile)
     const { data } = await apiClient.post<ScanDetail>('/scans/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })

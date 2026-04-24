@@ -39,6 +39,8 @@ from app.api.schemas import (
     OCTResultOut,
     PolicyResultOut,
     PolicyRuleOutcome,
+    ProfileFeatureOut,
+    ProfileScoreOut,
     QualityScoreOut,
     ScanDetailOut,
     ScanDiffOut,
@@ -50,8 +52,10 @@ from app.api.schemas import (
 )
 from app.config import settings
 from app.core.compliance import check_bsi, check_fsct, check_ntia, check_oct
+from app.core.eol_checker import check_eol_async
 from app.core.parser import ParseError, parse
 from app.core.policy import evaluate_policy, parse_policy
+from app.core.profiles import PROFILE_MAP
 from app.core.risk_analyzer import analyze
 from app.core.scorer import QualityScore, score, quality_score_to_dict
 from app.core.validator import validate
@@ -76,6 +80,7 @@ async def upload_scan(
     save_to_history: bool = Form(default=True),
     workspace_id: Optional[str] = Form(default=None),
     run_compliance: bool = Form(default=True),
+    profile: Optional[str] = Form(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user),
 ) -> ScanDetailOut:
@@ -113,16 +118,22 @@ async def upload_scan(
 
     effective_vuln_check = vuln_check and settings.VULN_CHECK_ENABLED
     vuln_results: dict = {}
+    eol_results: Optional[dict] = None
     if effective_vuln_check:
         vuln_results = await check_vulnerabilities(doc.components, enabled=True)
+        eol_results = await check_eol_async(doc.components)
 
     risk_report = analyze(doc, vuln_results=vuln_results)
 
-    # Quality scoring (pass vuln_results for Category 8 security health metrics)
+    # Quality scoring (pass vuln_results + eol_results for Category 8 security health)
     qs: Optional[QualityScore] = None
     qs_dict: Optional[dict] = None
     try:
-        qs = score(doc, vuln_results=vuln_results if effective_vuln_check else None)
+        qs = score(
+            doc,
+            vuln_results=vuln_results if effective_vuln_check else None,
+            eol_results=eol_results,
+        )
         qs_dict = quality_score_to_dict(qs)
     except Exception as exc:
         logger.warning("Quality scoring failed: %s", exc)
@@ -149,6 +160,16 @@ async def upload_scan(
             oct_res_dict = check_oct(doc).to_dict()
         except Exception as exc:
             logger.warning("OCT check failed: %s", exc)
+
+    # Scored compliance profile (optional)
+    profile_result_dict: Optional[dict] = None
+    if profile and qs:
+        profile_fn = PROFILE_MAP.get(profile.lower())
+        if profile_fn:
+            try:
+                profile_result_dict = profile_fn(qs).to_dict()
+            except Exception as exc:
+                logger.warning("Profile scoring failed for '%s': %s", profile, exc)
 
     # Dependency graph
     dep_graph_dict: Optional[dict] = None
@@ -235,6 +256,8 @@ async def upload_scan(
             scan.oct_result = oct_res_dict
         if policy_result_dict:
             scan.policy_result = policy_result_dict
+        if profile_result_dict:
+            scan.profile_result = profile_result_dict
         db.add(scan)
         await db.flush()
 
@@ -297,6 +320,7 @@ async def upload_scan(
         compliance=_build_compliance_out(ntia_res_dict, bsi_res_dict, fsct_res_dict, oct_res_dict),
         dependency_graph=_dep_graph_to_out(dep_graph_dict),
         policy_result=_policy_result_to_out(policy_result_dict),
+        profile_score=_profile_to_out(profile_result_dict),
     )
 
 
@@ -395,6 +419,7 @@ async def get_scan(
         ),
         dependency_graph=_dep_graph_to_out(scan.dependency_graph),
         policy_result=_policy_result_to_out(scan.policy_result),
+        profile_score=_profile_to_out(scan.profile_result),
     )
 
 
@@ -553,6 +578,7 @@ async def _fetch_scan_detail(
         ),
         dependency_graph=_dep_graph_to_out(scan.dependency_graph),
         policy_result=_policy_result_to_out(scan.policy_result),
+        profile_score=_profile_to_out(scan.profile_result),
     )
 
 
@@ -656,6 +682,7 @@ def _vuln_dict_to_out(v: dict) -> VulnOut:
 
 
 def _qs_to_out(qs: QualityScore) -> QualityScoreOut:
+    total_weight = sum(c.weight for c in qs.categories) or 1
     cat_outs = []
     for cat in qs.categories:
         feat_outs = [
@@ -665,9 +692,10 @@ def _qs_to_out(qs: QualityScore) -> QualityScoreOut:
             )
             for f in cat.features
         ]
+        weighted_score = round(cat.score * cat.weight / total_weight, 4)
         cat_outs.append(CategoryResultOut(
             name=cat.name, weight=cat.weight, score=cat.score,
-            weighted_score=cat.weighted_score, features=feat_outs,
+            weighted_score=weighted_score, features=feat_outs,
         ))
     return QualityScoreOut(overall_score=qs.overall_score, grade=qs.grade, categories=cat_outs)
 
@@ -778,6 +806,7 @@ def _fsct_dict_to_out(d: Optional[dict]) -> Optional[FSCTResultOut]:
     return FSCTResultOut(
         standard=d.get("standard", "FSCT v3"),
         overall_score=float(d.get("overall_score", 0.0)),
+        raw_score=float(d["raw_score"]) if d.get("raw_score") is not None else None,
         records=_record_dicts_to_out(d.get("records") or []),
     )
 
@@ -821,3 +850,25 @@ def _policy_result_to_out(d: Optional[dict]) -> Optional[PolicyResultOut]:
         if isinstance(o, dict)
     ]
     return PolicyResultOut(overall=d.get("overall", "pass"), outcomes=outcomes)
+
+
+def _profile_to_out(d: Optional[dict]) -> Optional[ProfileScoreOut]:
+    if not d:
+        return None
+    features = [
+        ProfileFeatureOut(
+            key=f.get("key", ""),
+            score=f.get("score"),
+            applicable=bool(f.get("applicable", True)),
+            weight=float(f.get("weight", 0.0)),
+            detail=f.get("detail", ""),
+        )
+        for f in (d.get("features") or [])
+        if isinstance(f, dict)
+    ]
+    return ProfileScoreOut(
+        profile_name=d.get("profile_name", ""),
+        profile_score=float(d.get("profile_score", 0.0)),
+        grade=d.get("grade", "F"),
+        features=features,
+    )

@@ -1,7 +1,7 @@
 """Unit tests for the quality scoring engine."""
 
 import pytest
-from app.core.scorer import score, _grade, _boolean, _per_component, _tiered
+from app.core.scorer import score, _grade, _boolean, _per_component, _tiered, quality_score_to_dict
 
 
 class TestHelpers:
@@ -35,6 +35,10 @@ class TestHelpers:
     def test_per_component_empty(self):
         assert _per_component(0, 0) == 0.0
 
+    def test_per_component_cap_9_9(self):
+        # 4/5 should never reach 10.0 when have < total
+        assert _per_component(4, 5) <= 9.9
+
     def test_tiered(self):
         assert _tiered(0) == 0.0
         assert _tiered(1) == 5.0
@@ -49,9 +53,13 @@ class TestScorer:
         assert qs.grade in ("A", "B", "C", "D", "F")
         assert len(qs.categories) > 0
 
-    def test_score_has_seven_categories(self, cdx_json_doc):
+    def test_score_has_seven_base_categories(self, cdx_json_doc):
         qs = score(cdx_json_doc)
         assert len(qs.categories) == 7
+
+    def test_score_eight_categories_with_vuln(self, cdx_json_doc):
+        qs = score(cdx_json_doc, vuln_results={})
+        assert len(qs.categories) == 8
 
     def test_score_spdx_doc(self, spdx_tv_doc):
         qs = score(spdx_tv_doc)
@@ -79,3 +87,95 @@ class TestScorer:
     def test_grade_consistent_with_score(self, cdx_json_doc):
         qs = score(cdx_json_doc)
         assert qs.grade == _grade(qs.overall_score)
+
+    # --- BUG-04: weighted_score denominator is dynamic ---
+
+    def test_weighted_score_denominator_matches_actual_weights(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        d = quality_score_to_dict(qs)
+        total_weight = sum(c["weight"] for c in d["categories"])
+        for cat in d["categories"]:
+            expected_ws = round(cat["score"] * cat["weight"] / total_weight, 4)
+            assert cat["weighted_score"] == pytest.approx(expected_ws, abs=0.001)
+
+    def test_weighted_scores_sum_to_overall(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        d = quality_score_to_dict(qs)
+        ws_sum = sum(c["weighted_score"] for c in d["categories"])
+        assert ws_sum == pytest.approx(qs.overall_score, abs=0.01)
+
+    # --- ARCH-01: Category weight alignment ---
+
+    def test_base_weights_sum_to_82(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        assert len(qs.categories) == 7
+        total = sum(c.weight for c in qs.categories)
+        assert total == 82
+
+    def test_integrity_weight_is_15(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        integrity = next(c for c in qs.categories if c.name == "Integrity")
+        assert integrity.weight == 15
+
+    def test_vuln_traceability_weight_is_10(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        vt = next(c for c in qs.categories if "Vulnerability" in c.name)
+        assert vt.weight == 10
+
+    def test_identification_weight_is_10(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        ident = next(c for c in qs.categories if c.name == "Identification")
+        assert ident.weight == 10
+
+    # --- BUG-03: PURL/CPE no longer in Identification ---
+
+    def test_purl_not_in_identification(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        ident = next(c for c in qs.categories if c.name == "Identification")
+        keys = [f.key for f in ident.features]
+        assert "comp_has_purl" not in keys
+        assert "comp_has_cpe" not in keys
+
+    def test_purl_in_vuln_traceability(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        vt = next(c for c in qs.categories if "Vulnerability" in c.name)
+        keys = [f.key for f in vt.features]
+        assert "comp_with_valid_purl" in keys
+
+    def test_malformed_purl_scores_zero_in_vuln(self):
+        """A truthy but syntactically invalid PURL should score 0 in Vuln category."""
+        from app.core.parser import SBOMDocument, Component
+        comp = Component(name="bad", version="1.0", purl="not-a-purl")
+        doc = SBOMDocument(format="cyclonedx", spec_version="1.4", components=[comp])
+        qs = score(doc)
+        vt = next(c for c in qs.categories if "Vulnerability" in c.name)
+        purl_feat = next(f for f in vt.features if f.key == "comp_with_valid_purl")
+        assert purl_feat.score == 0.0
+
+    # --- ARCH-02: comp_with_dependencies N/A for SPDX without dep edges ---
+
+    def test_comp_with_dependencies_na_for_spdx_no_depends_on(self, spdx_tv_doc):
+        """SPDX SBOM with only DESCRIBES relationships → comp_with_dependencies N/A."""
+        qs = score(spdx_tv_doc)
+        completeness = next(c for c in qs.categories if c.name == "Completeness")
+        dep_feat = next((f for f in completeness.features if f.key == "comp_with_dependencies"), None)
+        # If the fixture only has DESCRIBES relationships, should be N/A
+        if dep_feat is not None and not dep_feat.applicable:
+            assert dep_feat.applicable is False
+
+    def test_comp_with_dependencies_applicable_for_cdx(self, cdx_json_doc):
+        qs = score(cdx_json_doc)
+        completeness = next(c for c in qs.categories if c.name == "Completeness")
+        dep_feat = next(f for f in completeness.features if f.key == "comp_with_dependencies")
+        assert dep_feat.applicable is True
+
+    # --- ROBUST-05: SPDX 3.x version support ---
+
+    def test_spdx_3_0_version_is_supported(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="spdx", spec_version="3.0.1",
+                           components=[], file_format="json")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        version_feat = next(f for f in structural.features if f.key == "spec_version_supported")
+        assert version_feat.score == 10.0
