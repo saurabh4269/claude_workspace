@@ -8,19 +8,22 @@ Verity automates the validation and risk assessment of Software Bill of Material
 
 ## Features
 
-- **Multi-format parsing** — CycloneDX JSON/XML (1.4–1.6), SPDX JSON/YAML/tag-value (2.2–2.3)
-- **Quality scoring** — weighted 0–10 score across 7 categories (Structural, Identification, Provenance, Integrity, Licensing, Vulnerability Traceability, Completeness) with letter grade A–F
+- **Multi-format parsing** — CycloneDX JSON/XML (1.4–1.6), SPDX JSON/YAML/tag-value (2.2–2.3, 3.0)
+- **Quality scoring** — weighted 0–10 score across 7 categories (Structural, Identification, Provenance, Integrity, Licensing, Vulnerability & Traceability, Completeness) with letter grade A–F; base weight total 82
 - **Compliance validation** — NTIA Minimum Elements, BSI TR-03183-2 (v1.1 / v2.0 / v2.1), FSCT v3, OpenChain Telco v1.1
+- **Scored compliance profiles** — continuous 0–10 profile score against NTIA, BSI v2.1, FSCT v3, or OpenChain Telco; selectable at scan time; exposed in the UI Profile tab and PDF report
 - **Risk scoring** — per-component scores based on missing fields, license type (AGPL/GPL/LGPL tiers), and CVE severity; document-level escalation when >30% of components are HIGH+
 - **Live vulnerability lookup** — OSV.dev batch API, CISA KEV catalog, EPSS scores (FIRST.org); optional NVD enrichment for CVSS gaps
+- **Malicious package detection** — flags OSV advisories with a `MAL-` prefix as malicious (score penalty in Component Security Health)
+- **EOL/EOS detection** — queries endoflife.date for each component product; flags end-of-life components in Component Security Health
 - **Policy engine** — YAML-based allow/deny rules on licenses, component names, score thresholds, and vulnerability attributes
-- **Export** — PDF reports (WeasyPrint, brand-styled) and JSON for downstream tooling
+- **Export** — PDF reports (WeasyPrint, brand-styled; includes profile score section) and JSON for downstream tooling
 - **Scan history** — stored in SQLite (or PostgreSQL), queryable with filters and pagination
 - **Workspace analytics** — aggregate statistics, risk distribution, score trends, and top vulnerabilities across a workspace
 - **Workspaces** — invite teammates, share scans across a team
 - **Optional auth** — JWT-based login, disabled by default; toggle on/off from the Settings UI without restarting
 - **CLI** — pipe-friendly, CI/CD ready with configurable fail thresholds
-- **Web UI** — React dashboard with quality breakdown, NTIA checklist, compliance panel, component tables, and export buttons
+- **Web UI** — React dashboard with quality breakdown, NTIA checklist, compliance panel, component tables, profile score tab, and export buttons
 - **REST API** — OpenAPI docs at `/docs`; CI integration endpoint for automated pipelines
 
 ---
@@ -85,17 +88,19 @@ verity scan sbom.xml --fail-on MEDIUM --no-save
 
 ## Quality Scoring
 
-Every scan produces a 0–10 quality score and a letter grade (A–F) computed across seven weighted categories:
+Every scan produces a 0–10 quality score and a letter grade (A–F) computed across seven weighted categories (base weight total: 82):
 
 | Category | Weight | What it measures |
 |---|---|---|
-| Structural | 8 | Spec declaration, version support, file format, schema validity |
-| Identification | 10 | Component names, versions, unique local IDs |
+| Structural Validity | 8 | Spec declaration, version support, file format, schema validity |
+| Identification | 10 | Component names, versions, unique local IDs (PURL/CPE are in Vulnerability & Traceability) |
 | Provenance | 12 | Creation timestamp, authors, tool versions, namespace, supplier, lifecycle |
 | Integrity | 15 | Checksums (any and strong SHA-256+), document-level signature |
-| Licensing | 15 | License presence, SPDX validity, declared licenses, deprecated/restrictive license detection |
-| Vulnerability Traceability | 10 | PURL and CPE presence and syntax validity |
+| License Compliance | 15 | License presence, SPDX validity, declared licenses, deprecated/restrictive license detection |
+| Vulnerability & Traceability | 10 | PURL and CPE syntax validity; at least one valid identifier per component |
 | Completeness | 12 | Primary component, dependency graph, per-component supplier/source/type |
+
+An optional **Component Security Health** category (weight 8) is appended when vulnerability results are available, covering vulnerable components, critical CVEs, EOL components, and malicious packages. It does not contribute to the base denominator.
 
 **Grade scale**
 
@@ -114,11 +119,17 @@ Every scan produces a 0–10 quality score and a letter grade (A–F) computed a
 | Standard | Scope | Notes |
 |---|---|---|
 | NTIA Minimum Elements (2021) | 7 required elements | Per-component name, version, supplier, unique ID; document author, timestamp, dependency relationships |
-| BSI TR-03183-2 v1.1 | SHALL + SHOULD tiers | CDX 1.4+ / SPDX 2.3+; creator contact, SHA-256 hash, license, dependency resolution |
+| BSI TR-03183-2 v1.1 | SHALL + SHOULD tiers | CDX 1.4+ / SPDX ≥ 2.2; creator, SHA-256 hash, license, dependency resolution |
 | BSI TR-03183-2 v2.0 | Adds: no vuln data, signature, BOM links | CDX 1.5+ / SPDX 2.2.1+; filename property, completeness declaration |
 | BSI TR-03183-2 v2.1 | Latest — CDX 1.6 only | SHA-512 on deployable artifact, declared licenses (acknowledgement field), SBOM URI promoted to SHALL |
-| FSCT v3 | Multi-level scoring | SBOM author, lifecycle, relationships, per-component checksum strength, license quality |
-| OpenChain Telco v1.1 | SPDX only | 26 document + component checks; SHA-256, PURL, concluded/declared license, copyright text |
+| FSCT v3 | Multi-level scoring (0/10/12/15) | SBOM author, lifecycle, relationships, per-component checksum (strong=12), license quality; raw score exposed separately |
+| OpenChain Telco v1.1 | SPDX only | 27 document + component checks; org/tool creator split, SHA-256 normalised, PURL, concluded/declared license, copyright text |
+
+### Scored Compliance Profiles
+
+In addition to pass/fail compliance checking, Verity can compute a **continuous 0–10 profile score** against any supported standard. Select a profile at scan time to get a weighted score on just the features that standard cares about. N/A features (not applicable for the SBOM format) are excluded from the denominator.
+
+Available profiles: `ntia`, `bsi` (v2.1), `fsct`, `oct`.
 
 ---
 
@@ -227,6 +238,8 @@ Interactive docs are available at `http://localhost:8000/docs` when the server i
 
 ```
 POST   /api/v1/scans/upload              Upload and analyse an SBOM file
+                                           Form params: file, vuln_check, save_to_history,
+                                           run_compliance, workspace_id, profile
 GET    /api/v1/scans                     List scans (paginated, filterable)
 GET    /api/v1/scans/{id}               Full scan detail with components
 GET    /api/v1/scans/{id}/export/pdf    Download PDF report
@@ -261,11 +274,13 @@ verity/
 │   ├── app/
 │   │   ├── core/
 │   │   │   ├── parser.py          # Multi-format SBOM parser
-│   │   │   ├── scorer.py          # Quality scoring engine (7 categories)
+│   │   │   ├── scorer.py          # Quality scoring engine (7 categories, base weight 82)
 │   │   │   ├── risk_analyzer.py   # Per-component and document risk scoring
-│   │   │   ├── vuln_checker.py    # OSV, KEV, EPSS, NVD lookup
+│   │   │   ├── vuln_checker.py    # OSV, KEV, EPSS, NVD lookup + malicious detection
+│   │   │   ├── eol_checker.py     # EOL/EOS detection via endoflife.date API
 │   │   │   ├── policy.py          # YAML policy engine
-│   │   │   ├── compliance/        # NTIA, BSI, FSCT, OCT checkers
+│   │   │   ├── compliance/        # NTIA, BSI, FSCT, OCT pass/fail checkers
+│   │   │   ├── profiles/          # Scored compliance profiles (NTIA, BSI, FSCT, OCT)
 │   │   │   └── licenses/          # SPDX license database and validator
 │   │   ├── api/
 │   │   │   ├── routes/            # scans, workspaces, auth, ci, settings
