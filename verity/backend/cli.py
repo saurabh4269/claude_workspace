@@ -122,6 +122,7 @@ async def _run_scan(content: str, filename: str, vuln_check: bool) -> dict:
     """Run the full scan pipeline and return a result dict."""
     from app.core.parser import ParseError, parse
     from app.core.risk_analyzer import analyze
+    from app.core.scorer import quality_score_to_dict, score
     from app.core.validator import validate
     from app.core.vuln_checker import check_vulnerabilities
 
@@ -143,6 +144,8 @@ async def _run_scan(content: str, filename: str, vuln_check: bool) -> dict:
             )
 
     risk_report = analyze(doc, vuln_results=vuln_results)
+    quality = score(doc, vuln_results=vuln_results if vuln_check else None)
+    quality_dict = quality_score_to_dict(quality)
 
     # Count stats
     vulnerable_count = sum(
@@ -197,6 +200,9 @@ async def _run_scan(content: str, filename: str, vuln_check: bool) -> dict:
         "risk_level": risk_report.overall_risk_level,
         "risk_score": risk_report.overall_risk_score,
         "ntia_compliant": validation_result.ntia_compliant,
+        "quality_score": quality_dict["overall_score"],
+        "quality_grade": quality_dict["grade"],
+        "quality_categories": quality_dict["categories"],
         "total_components": len(doc.components),
         "vulnerable_components": vulnerable_count,
         "invalid_components": invalid_count,
@@ -256,6 +262,10 @@ def _output_text(result: dict) -> None:
 
     # Header panel
     ntia_status = "[green]YES[/green]" if result.get("ntia_compliant") else "[red]NO[/red]"
+    q_score = result.get("quality_score", 0.0)
+    q_grade = result.get("quality_grade", "?")
+    grade_colors = {"A": "green", "B": "cyan", "C": "yellow", "D": "dark_orange", "F": "red"}
+    grade_color = grade_colors.get(q_grade, "white")
     console.print(
         Panel(
             f"[bold]File:[/bold] {result.get('filename', '')}\n"
@@ -263,6 +273,7 @@ def _output_text(result: dict) -> None:
             f"{result.get('format_version', '')}\n"
             f"[bold]Risk Level:[/bold] [{risk_color}]{risk_level}[/{risk_color}] "
             f"(score: {result.get('risk_score', 0):.1f})\n"
+            f"[bold]Quality Score:[/bold] [{grade_color}]{q_score:.1f}/10 ({q_grade})[/{grade_color}]\n"
             f"[bold]NTIA Compliant:[/bold] {ntia_status}",
             title="[bold cyan]Verity SBOM Scan Result[/bold cyan]",
             border_style="cyan",

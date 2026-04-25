@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, TrendingUp, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { workspaces } from '@/lib/api'
@@ -132,7 +133,7 @@ export default function Analytics() {
       ) : !workspaceList || workspaceList.length === 0 ? (
         <div className="rounded-xl bg-gray-50 px-6 py-8 text-center">
           <BarChart3 size={40} className="text-gray-300 mx-auto mb-3" />
-          <p className="text-sm text-gray-400 font-sans">No workspaces found. Create one in Settings.</p>
+          <p className="text-sm text-gray-400 font-sans">No workspaces found. Create one in <Link to="/settings" className="underline hover:text-gray-600">Settings</Link>.</p>
         </div>
       ) : (
         <div className="flex gap-3 items-end flex-wrap">

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, require_auth
 from app.api.schemas import (
+    InviteCreate,
     PolicyOut,
     PolicyUpsert,
     WorkspaceAnalyticsOut,
@@ -346,7 +347,7 @@ async def remove_member(
 @router.post("/{workspace_id}/invite")
 async def invite_member(
     workspace_id: str,
-    body: dict,
+    body: InviteCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
@@ -372,9 +373,7 @@ async def invite_member(
         if member is None or member.role not in ("owner", "admin"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner or admin required to invite members")
 
-    email = body.get("email", "").strip()
-    if not email:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email is required")
+    email = str(body.email).strip()
 
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)

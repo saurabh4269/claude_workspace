@@ -10,7 +10,7 @@ import { CompliancePanel } from '@/components/CompliancePanel'
 import { Spinner } from '@/components/ui/Spinner'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import type { QualityScore, NTIAResult, FeatureResult, PolicyResult, DependencyGraph, ProfileScore } from '@/lib/api'
+import type { QualityScore, NTIAResult, FeatureResult, PolicyResult, DependencyGraph, ProfileScore, Component } from '@/lib/api'
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -268,13 +268,13 @@ function NTIAChecklist({
   )
 }
 
-function TopComponentsList({ components }: { components: any[] }) {
+function TopComponentsList({ components }: { components: Component[] }) {
   if (components.length === 0) {
     return <p className="text-[15px] text-gray-400 font-sans">No components found.</p>
   }
   return (
     <div>
-      {components.map((comp: any) => {
+      {components.map((comp) => {
         const vulnCount = comp.vulnerabilities?.length ?? 0
         return (
           <div key={comp.id} className="flex items-center gap-4 py-3.5 border-b border-gray-100 last:border-b-0">
