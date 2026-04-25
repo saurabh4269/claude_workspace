@@ -5,26 +5,24 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy manifests first so this layer is cached unless deps change
-COPY package.json package-lock.json* ./
+# Copy manifests first — this layer is cached until lock file changes
+COPY package.json package-lock.json ./
 
-# npm ci is faster and strictly reproducible; falls back to npm install if no lockfile
-RUN npm ci --prefer-offline 2>/dev/null || npm install --prefer-offline
+# Cache mount keeps npm's content-addressable store across builds
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --ignore-scripts
 
-# Copy source and build (vite build only - tsc type checking runs separately in CI)
 COPY . .
+ENV NODE_ENV=production
 RUN npx vite build
 
-# Stage 2: runtime (nginx-alpine is ~7 MB)
+# Stage 2: runtime (~7 MB nginx-alpine)
 FROM nginx:1.27-alpine AS runtime
 
-# Remove default nginx static assets
 RUN rm -rf /usr/share/nginx/html/*
 
-# Copy built assets from builder
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --link --from=builder /app/dist /usr/share/nginx/html
 
-# React Router: all routes serve index.html; /api proxies to backend service
 RUN printf 'server {\n\
     listen 80;\n\
     root /usr/share/nginx/html;\n\
