@@ -1,12 +1,12 @@
 services:
-  backend:
-    image: ghcr.io/saurabh4269/verity-backend:latest
-    container_name: verity-backend
+  verity:
+    image: ghcr.io/saurabh4269/verity:latest
+    container_name: verity
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8080:8080"
     volumes:
-      - verity-db:/app/data
+      - verity-data:/app/data
     environment:
       DATABASE_URL: sqlite+aiosqlite:////app/data/verity.db
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
@@ -14,24 +14,7 @@ services:
       HISTORY_ENABLED: ${HISTORY_ENABLED:-true}
       VULN_CHECK_ENABLED: ${VULN_CHECK_ENABLED:-true}
       NVD_API_KEY: ${NVD_API_KEY:-}
-      CORS_ORIGINS: '["http://localhost", "http://localhost:80", "http://localhost:3000"]'
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 45s
-
-  frontend:
-    image: ghcr.io/saurabh4269/verity-frontend:latest
-    container_name: verity-frontend
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    depends_on:
-      backend:
-        condition: service_healthy
 
 volumes:
-  verity-db:
+  verity-data:
     driver: local

@@ -2,9 +2,9 @@
 # Run in PowerShell as Administrator if Docker is not yet installed.
 # Usage: Right-click -> "Run with PowerShell"  OR  powershell -ExecutionPolicy Bypass -File setup.ps1
 
-$ComposeUrl = "https://raw.githubusercontent.com/saurabh4269/verity/main/docker-compose.yml"
-$UiUrl      = "http://localhost"
-$ApiUrl     = "http://localhost:8000"
+$Image     = "ghcr.io/saurabh4269/verity:latest"
+$Container = "verity"
+$Port      = 8080
 
 function Write-Header {
     Write-Host ""
@@ -73,38 +73,53 @@ try {
     Write-Err "Docker Compose plugin not found. Please update Docker Desktop: https://www.docker.com/products/docker-desktop/"
 }
 
-# ── 4. Pull and start Verity ───────────────────────────────────────────────────
-Write-Info "Starting Verity (pulling images on first run — this may take a few minutes)..."
-docker compose -f $ComposeUrl up -d
+# ── 4. Find a free port ────────────────────────────────────────────────────────
+while ((Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)) {
+    Write-Warn "Port $Port is in use, trying $($Port + 1)..."
+    $Port++
+}
+Write-Info "Using port $Port."
+
+# ── 5. Remove existing Verity container if present ────────────────────────────
+$existing = docker ps -a --format "{{.Names}}" | Where-Object { $_ -eq $Container }
+if ($existing) {
+    Write-Warn "Existing Verity container found. Removing it..."
+    docker stop $Container 2>&1 | Out-Null
+    docker rm $Container 2>&1 | Out-Null
+}
+
+# ── 6. Pull and start Verity ───────────────────────────────────────────────────
+Write-Info "Starting Verity (pulling image on first run — this may take a few minutes)..."
+docker run -d --name $Container -p "${Port}:8080" -v verity-data:/app/data --restart unless-stopped -e HOST_PORT="$Port" $Image
 
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Failed to start Verity. Check the output above for details."
 }
 
-# ── 5. Wait for backend health ─────────────────────────────────────────────────
+# ── 7. Wait for health ────────────────────────────────────────────────────────
 Write-Info "Waiting for Verity to be ready..."
 $ready = $false
+$UiUrl = "http://localhost:$Port"
 
 for ($i = 0; $i -lt 30; $i++) {
     try {
-        $resp = Invoke-WebRequest -Uri "$ApiUrl/health" -UseBasicParsing -TimeoutSec 3 -ErrorAction SilentlyContinue
+        $resp = Invoke-WebRequest -Uri "$UiUrl/health" -UseBasicParsing -TimeoutSec 3 -ErrorAction SilentlyContinue
         if ($resp.StatusCode -eq 200) { $ready = $true; break }
     } catch {}
     Start-Sleep -Seconds 3
 }
 
 if (-not $ready) {
-    Write-Warn "Verity is taking longer than expected. Check status with: docker compose logs"
+    Write-Warn "Verity is taking longer than expected. Check status with: docker logs $Container"
 } else {
     Write-Host ""
     Write-Success "Verity is up and running!"
     Write-Host ""
-    Write-Host "  Web UI:   $UiUrl"   -ForegroundColor Cyan
-    Write-Host "  API:      $ApiUrl"  -ForegroundColor Cyan
-    Write-Host "  API Docs: $ApiUrl/docs" -ForegroundColor Cyan
+    Write-Host "  Web UI:   $UiUrl" -ForegroundColor Cyan
+    Write-Host "  API Docs: $UiUrl/docs" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  To stop:   docker compose -f $ComposeUrl down"
-    Write-Host "  To update: docker compose -f $ComposeUrl pull; docker compose -f $ComposeUrl up -d"
+    Write-Host "  To stop:   docker stop $Container"
+    Write-Host "  To update: docker pull $Image; docker stop $Container; docker rm $Container; docker run -d --name $Container -p ${Port}:8080 -v verity-data:/app/data $Image"
     Write-Host ""
     Start-Process $UiUrl
 }
