@@ -8,6 +8,7 @@ SPDX-only format. CycloneDX input immediately fails the format check.
 """
 
 from __future__ import annotations
+import re
 from dataclasses import dataclass
 
 from app.core.parser import SBOMDocument
@@ -16,6 +17,7 @@ from app.core.compliance.record import (
 )
 from app.core.licenses.spdx_db import is_absent
 
+_EMAIL_RE = re.compile(r'<[^@\s]+@[^@\s]+\.[^@\s]+>')
 
 @dataclass
 class OCTResult:
@@ -60,8 +62,8 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
                         doc.created or "", "RFC3339 timestamp", ""))
 
     # SPDXRef-DOCUMENT: the document element must carry this exact identifier
-    spdx_doc_id = getattr(doc, "spdx_id", "") or getattr(doc, "document_namespace", "")
-    has_doc_spdxid = bool(spdx_doc_id) and "SPDXRef-DOCUMENT" in spdx_doc_id
+    spdx_doc_id = getattr(doc, "spdx_id", "") or ""
+    has_doc_spdxid = spdx_doc_id == "SPDXRef-DOCUMENT"
     records.append(_req("oct_sbom_spdxid", 10.0 if has_doc_spdxid else 0.0, "document",
                         spdx_doc_id or "",
                         "SPDXRef-DOCUMENT identifier on document element",
@@ -86,7 +88,7 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
     # Organisation and tool as separate checks (OCT §3 requires both)
     creators = doc.authors or []
     has_org = any(
-        "organization" in (a or "").lower() or a.startswith("Organization:")
+        (a or "").startswith("Organization:") or (a or "").startswith("organization:")
         for a in creators
     )
     records.append(_req("oct_sbom_organization", 10.0 if has_org else 0.0, "document",
@@ -149,9 +151,15 @@ def check_oct(doc: SBOMDocument) -> OCTResult:
         records.append(_req("oct_pkg_version", 10.0 if (comp.version and comp.version.strip()) else 0.0,
                             cid, comp.version or "", "Package version", ""))
 
-        has_supplier = bool(comp.supplier and comp.supplier.strip())
-        records.append(_req("oct_pkg_supplier", 10.0 if has_supplier else 0.0,
-                            cid, comp.supplier or "", "Supplier with email", ""))
+        supplier_val = (comp.supplier or "").strip()
+        if not supplier_val or supplier_val.upper() in ("NOASSERTION", "NONE"):
+            oct_supplier_score, oct_supplier_detail = 0.0, "Supplier absent or NOASSERTION"
+        elif _EMAIL_RE.search(supplier_val):
+            oct_supplier_score, oct_supplier_detail = 10.0, f"Supplier with email: {supplier_val}"
+        else:
+            oct_supplier_score, oct_supplier_detail = 5.0, f"Supplier present but no email: {supplier_val}"
+        records.append(_req("oct_pkg_supplier", oct_supplier_score, cid, supplier_val,
+                            "Supplier with <email@domain>", oct_supplier_detail))
 
         # Download location
         ext_refs = getattr(comp, "external_references", []) or []

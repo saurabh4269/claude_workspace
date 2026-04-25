@@ -179,3 +179,118 @@ class TestScorer:
         structural = next(c for c in qs.categories if c.name == "Structural Validity")
         version_feat = next(f for f in structural.features if f.key == "spec_version_supported")
         assert version_feat.score == 10.0
+
+
+# ---------------------------------------------------------------------------
+# Gap fix tests for scorer (G9, G10, G12, G15)
+# ---------------------------------------------------------------------------
+
+class TestG9_CDXLegacyVersions:
+    """G9: CDX 1.0–1.3 should be recognised as supported versions."""
+
+    def test_cdx_10_recognized(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="cyclonedx", spec_version="1.0",
+                           components=[], file_format="xml")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "spec_version_supported")
+        assert feat.score == pytest.approx(10.0)
+
+    def test_cdx_13_recognized(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="cyclonedx", spec_version="1.3",
+                           components=[], file_format="xml")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "spec_version_supported")
+        assert feat.score == pytest.approx(10.0)
+
+    def test_cdx_17_recognized(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="cyclonedx", spec_version="1.7",
+                           components=[], file_format="json")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "spec_version_supported")
+        assert feat.score == pytest.approx(10.0)
+
+
+class TestG10_SPDXSignatureNA:
+    """G10: sbom_signature should be N/A (not applicable) for SPDX SBOMs."""
+
+    def test_signature_not_applicable_for_spdx(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="spdx", spec_version="SPDX-2.3",
+                           components=[], file_format="tv")
+        qs = score(doc)
+        integrity = next(c for c in qs.categories if c.name == "Integrity")
+        sig_feat = next(f for f in integrity.features if f.key == "sbom_signature")
+        assert sig_feat.applicable is False
+
+    def test_signature_applicable_for_cdx(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="cyclonedx", spec_version="1.6",
+                           components=[], file_format="json")
+        qs = score(doc)
+        integrity = next(c for c in qs.categories if c.name == "Integrity")
+        sig_feat = next(f for f in integrity.features if f.key == "sbom_signature")
+        assert sig_feat.applicable is True
+
+
+class TestG12_FileFormatValid:
+    """G12: file_format_valid must use per-spec format set check."""
+
+    def test_spdx_json_valid(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="spdx", spec_version="SPDX-2.3",
+                           components=[], file_format="json")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "file_format_valid")
+        assert feat.score == pytest.approx(10.0)
+
+    def test_spdx_yaml_valid(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="spdx", spec_version="SPDX-2.3",
+                           components=[], file_format="yaml")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "file_format_valid")
+        assert feat.score == pytest.approx(10.0)
+
+    def test_spdx_tv_valid(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="spdx", spec_version="SPDX-2.3",
+                           components=[], file_format="tv")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "file_format_valid")
+        assert feat.score == pytest.approx(10.0)
+
+    def test_cdx_xml_valid(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="cyclonedx", spec_version="1.4",
+                           components=[], file_format="xml")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "file_format_valid")
+        assert feat.score == pytest.approx(10.0)
+
+    def test_cdx_yaml_invalid(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="cyclonedx", spec_version="1.4",
+                           components=[], file_format="yaml")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "file_format_valid")
+        assert feat.score == pytest.approx(0.0)
+
+    def test_spdx_xml_invalid(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(format="spdx", spec_version="SPDX-2.3",
+                           components=[], file_format="xml")
+        qs = score(doc)
+        structural = next(c for c in qs.categories if c.name == "Structural Validity")
+        feat = next(f for f in structural.features if f.key == "file_format_valid")
+        assert feat.score == pytest.approx(0.0)

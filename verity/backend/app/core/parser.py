@@ -39,6 +39,7 @@ class Component:
     properties: dict = field(default_factory=dict)
     copyright: Optional[str] = None
     download_location: Optional[str] = None
+    filename: Optional[str] = None           # SPDX PackageFileName / CDX bsi:component:filename
     # bom-ref / SPDXID used for dependency graph edge resolution
     bom_ref: Optional[str] = None
     # SPDX-specific: FilesAnalyzed (True by default per spec)
@@ -92,6 +93,8 @@ class SBOMDocument:
     compositions: list[dict] = field(default_factory=list)   # CDX compositions entries
     schema_valid: bool = True
     file_format: str = "json"
+    spdx_id: Optional[str] = None           # document-level SPDXID (always SPDXRef-DOCUMENT for valid SPDX)
+    document_comment: Optional[str] = None  # SPDX DocumentComment / creationInfo.comment
 
 
 # ---------------------------------------------------------------------------
@@ -753,8 +756,10 @@ def _parse_spdx_json(data: dict) -> SBOMDocument:
     document_name = data.get("name") or None
     document_namespace = data.get("documentNamespace") or None
     data_license = data.get("dataLicense") or None
+    doc_spdx_id_json = data.get("SPDXID") or None
     creation_info = data.get("creationInfo") or {}
     created = creation_info.get("created") if isinstance(creation_info, dict) else None
+    doc_comment = (creation_info.get("comment") if isinstance(creation_info, dict) else None) or None
 
     authors: list[str] = []
     tools: list = []
@@ -769,9 +774,9 @@ def _parse_spdx_json(data: dict) -> SBOMDocument:
             else:
                 tools.append({"name": tool_name})
         elif creator_str.startswith("Organization:"):
-            authors.append(creator_str[13:].strip())
+            authors.append(creator_str)
         elif creator_str.startswith("Person:"):
-            authors.append(creator_str[7:].strip())
+            authors.append(creator_str)
         else:
             authors.append(creator_str)
 
@@ -828,6 +833,8 @@ def _parse_spdx_json(data: dict) -> SBOMDocument:
         data_license=data_license,
         dependency_graph=graph.to_dict(),
         schema_valid=schema_valid,
+        spdx_id=doc_spdx_id_json,
+        document_comment=doc_comment,
     )
 
 
@@ -865,6 +872,7 @@ def _parse_spdx_package(pkg: dict) -> Optional[Component]:
     description = _spdx_val(pkg.get("description") or pkg.get("summary"))
     copyright_text = _spdx_val(pkg.get("copyrightText"))
     download_location = _spdx_val(pkg.get("downloadLocation"))
+    pkg_filename = _spdx_val(pkg.get("packageFileName"))
     bom_ref = pkg.get("SPDXID") or None
     files_analyzed_raw = pkg.get("filesAnalyzed")
     files_analyzed = bool(files_analyzed_raw) if files_analyzed_raw is not None else None
@@ -921,6 +929,7 @@ def _parse_spdx_package(pkg: dict) -> Optional[Component]:
         external_references=ext_refs,
         copyright=copyright_text,
         download_location=download_location,
+        filename=pkg_filename,
         bom_ref=bom_ref,
         files_analyzed=files_analyzed,
         raw=pkg,
@@ -938,6 +947,7 @@ def _parse_spdx_tagvalue(content: str) -> SBOMDocument:
     document_namespace: Optional[str] = None
     data_license: Optional[str] = None
     created: Optional[str] = None
+    document_comment: Optional[str] = None
     creators: list[str] = []
     authors: list[str] = []
     tools: list = []
@@ -967,6 +977,8 @@ def _parse_spdx_tagvalue(content: str) -> SBOMDocument:
             document_namespace = value
         elif tag == "Created":
             created = value
+        elif tag == "DocumentComment":
+            document_comment = value
         elif tag == "Creator":
             creators.append(value)
         elif tag == "SPDXID" and current_pkg is None:
@@ -995,9 +1007,9 @@ def _parse_spdx_tagvalue(content: str) -> SBOMDocument:
             tn = creator[5:].strip()
             tools.append({"name": tn})
         elif creator.startswith("Organization:"):
-            authors.append(creator[13:].strip())
+            authors.append(creator)
         elif creator.startswith("Person:"):
-            authors.append(creator[7:].strip())
+            authors.append(creator)
         else:
             authors.append(creator)
 
@@ -1045,6 +1057,8 @@ def _parse_spdx_tagvalue(content: str) -> SBOMDocument:
         data_license=data_license,
         dependency_graph=graph.to_dict(),
         file_format="tv",
+        spdx_id=doc_spdx_id or None,
+        document_comment=document_comment,
     )
 
 
@@ -1080,6 +1094,7 @@ def _parse_spdx_tv_package(pkg: dict) -> Optional[Component]:
 
     copyright_text = _tv_val(pkg.get("PackageCopyrightText"))
     download_location = _tv_val(pkg.get("PackageDownloadLocation"))
+    pkg_filename = _tv_val(pkg.get("PackageFileName") or pkg.get("FileName"))
     bom_ref = _tv_val(pkg.get("SPDXID"))
     fa_raw = _tv_val(pkg.get("FilesAnalyzed"))
     files_analyzed = (fa_raw.lower() == "true") if fa_raw is not None else None
@@ -1142,6 +1157,7 @@ def _parse_spdx_tv_package(pkg: dict) -> Optional[Component]:
         external_references=ext_refs,
         copyright=copyright_text,
         download_location=download_location,
+        filename=pkg_filename,
         bom_ref=bom_ref,
         files_analyzed=files_analyzed,
         raw=pkg,

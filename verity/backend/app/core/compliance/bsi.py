@@ -194,10 +194,11 @@ def _check_bsi_v11(doc: SBOMDocument) -> list[ComplianceRecord]:
                             "SHA-256 or stronger checksum",
                             "SHA-256 hash found" if hash_ok else "No SHA-256 hash"))
 
-        # Creator contact (SHOULD — per-component)
-        comp_contact = _has_contact(comp.supplier)
+        # Creator contact (SHOULD — per-component); check both supplier and manufacturer
+        comp_contact = _has_contact(comp.supplier) or _has_contact(getattr(comp, "manufacturer", None))
         records.append(_add("bsi_comp_creator_contact", 10.0 if comp_contact else 0.0, True, cid,
-                            comp.supplier or "", "Supplier email or URL", ""))
+                            comp.supplier or getattr(comp, "manufacturer", None) or "",
+                            "Supplier/manufacturer email or URL", ""))
 
         # Source code URL (SHOULD — BSI §5.3)
         from app.core.scorer import _has_source_url
@@ -287,9 +288,10 @@ def _check_bsi_v20(doc: SBOMDocument) -> list[ComplianceRecord]:
             r.tier = RecordTier.REQUIRED
             break
 
-    # BOM link (SHOULD)
+    # BOM link (SHOULD — CDX-only; SPDX has no BOM-link mechanism)
+    is_cdx = fmt == "cyclonedx"
     bom_links = getattr(doc, "bom_links", []) or []
-    records.append(_add("bsi_bom_links", 10.0 if bom_links else 0.0, True, "document",
+    records.append(_add("bsi_bom_links", 10.0 if bom_links else 0.0, is_cdx, "document",
                         str(bom_links), "External BOM reference",
                         "BOM link found" if bom_links else "No external BOM reference"))
 
@@ -383,6 +385,17 @@ def _check_bsi_v21(doc: SBOMDocument) -> list[ComplianceRecord]:
         if r.check_key == "bsi_sbom_uri":
             r.tier = RecordTier.REQUIRED
             break
+
+    # G3: promote SHOULD → SHALL for source URL, download URL, unique ID in v2.1
+    for r in records:
+        if r.check_key in ("bsi_comp_source_url", "bsi_comp_download_url", "bsi_comp_unique_id"):
+            r.tier = RecordTier.REQUIRED
+
+    # G4: promote component type property to SHALL for CDX 1.6 in v2.1
+    is_cdx16 = fmt == "cyclonedx" and version.startswith("1.6")
+    for r in records:
+        if r.check_key == "bsi_comp_type_property" and is_cdx16:
+            r.tier = RecordTier.REQUIRED
 
     # SHA-512 for deployable hash (new SHALL in v2.1, CDX 1.6 only)
     for comp in doc.components:

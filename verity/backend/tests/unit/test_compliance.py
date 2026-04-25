@@ -304,3 +304,300 @@ class TestNTIAv4:
         result = check_ntia(doc)
         dep_elem = next(e for e in result.elements if e.element_name == "Dependency Relationships")
         assert dep_elem.compliant is True
+
+
+# ---------------------------------------------------------------------------
+# Gap fix tests (G1–G15)
+# ---------------------------------------------------------------------------
+
+class TestG1_SpdxIdExactMatch:
+    """G1: OCT spdxid check must use exact equality, not substring."""
+
+    def _make_spdx_doc(self, spdx_id):
+        from app.core.parser import SBOMDocument
+        return SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            spdx_id=spdx_id, components=[],
+            document_namespace="https://example.com/test",
+            file_format="tv",
+        )
+
+    def test_exact_spdxref_document_scores_10(self):
+        doc = self._make_spdx_doc("SPDXRef-DOCUMENT")
+        result = check_oct(doc)
+        rec = next(r for r in result.records if r.check_key == "oct_sbom_spdxid")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_partial_match_scores_0(self):
+        doc = self._make_spdx_doc("some-SPDXRef-DOCUMENT-extra")
+        result = check_oct(doc)
+        rec = next(r for r in result.records if r.check_key == "oct_sbom_spdxid")
+        assert rec.score == pytest.approx(0.0)
+
+    def test_missing_spdxid_scores_0(self):
+        doc = self._make_spdx_doc(None)
+        result = check_oct(doc)
+        rec = next(r for r in result.records if r.check_key == "oct_sbom_spdxid")
+        assert rec.score == pytest.approx(0.0)
+
+
+class TestG2_DocumentComment:
+    """G2: OCT oct_sbom_comment should use parsed document_comment field."""
+
+    def test_doc_with_comment_scores_10(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            document_comment="This SBOM was generated automatically.",
+            components=[], file_format="tv",
+        )
+        result = check_oct(doc)
+        rec = next(r for r in result.records if r.check_key == "oct_sbom_comment")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_doc_without_comment_scores_0(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            document_comment=None, components=[], file_format="tv",
+        )
+        result = check_oct(doc)
+        rec = next(r for r in result.records if r.check_key == "oct_sbom_comment")
+        assert rec.score == pytest.approx(0.0)
+
+
+class TestG3G4_BSIv21Promotions:
+    """G3: source_url/download_url/unique_id promoted to REQUIRED in v2.1.
+       G4: comp_type_property promoted to REQUIRED for CDX 1.6 in v2.1."""
+
+    def _make_cdx16_doc(self):
+        from app.core.parser import SBOMDocument, Component
+        from app.core.compliance.record import RecordTier
+        comp = Component(name="lib", version="1.0", bom_ref="ref-lib")
+        return SBOMDocument(
+            format="cyclonedx", spec_version="1.6",
+            created="2024-01-01T00:00:00Z", authors=["Tool: test"],
+            components=[comp],
+        )
+
+    def test_source_url_required_in_v21(self):
+        from app.core.compliance.record import RecordTier
+        doc = self._make_cdx16_doc()
+        result = check_bsi(doc, version="v2.1")
+        recs = [r for r in result.records if r.check_key == "bsi_comp_source_url"]
+        assert recs, "bsi_comp_source_url records expected"
+        assert all(r.tier == RecordTier.REQUIRED for r in recs)
+
+    def test_download_url_required_in_v21(self):
+        from app.core.compliance.record import RecordTier
+        doc = self._make_cdx16_doc()
+        result = check_bsi(doc, version="v2.1")
+        recs = [r for r in result.records if r.check_key == "bsi_comp_download_url"]
+        assert recs
+        assert all(r.tier == RecordTier.REQUIRED for r in recs)
+
+    def test_unique_id_required_in_v21(self):
+        from app.core.compliance.record import RecordTier
+        doc = self._make_cdx16_doc()
+        result = check_bsi(doc, version="v2.1")
+        recs = [r for r in result.records if r.check_key == "bsi_comp_unique_id"]
+        assert recs
+        assert all(r.tier == RecordTier.REQUIRED for r in recs)
+
+    def test_type_property_required_in_v21_cdx16(self):
+        from app.core.compliance.record import RecordTier
+        doc = self._make_cdx16_doc()
+        result = check_bsi(doc, version="v2.1")
+        recs = [r for r in result.records if r.check_key == "bsi_comp_type_property"]
+        assert recs
+        assert all(r.tier == RecordTier.REQUIRED for r in recs)
+
+    def test_type_property_optional_in_v20(self):
+        from app.core.compliance.record import RecordTier
+        doc = self._make_cdx16_doc()
+        result = check_bsi(doc, version="v2.0")
+        recs = [r for r in result.records if r.check_key == "bsi_comp_type_property"]
+        assert recs
+        assert all(r.tier == RecordTier.OPTIONAL for r in recs)
+
+
+class TestG5_FSCTLifecycle:
+    """G5: FSCT lifecycle scoring must be binary (0/15), not 0/10/15."""
+
+    def _make_doc(self, lifecycles):
+        from app.core.parser import SBOMDocument, Component
+        return SBOMDocument(
+            format="cyclonedx", spec_version="1.5",
+            created="2024-01-01T00:00:00Z", authors=["Tool: t"],
+            components=[], lifecycles=lifecycles,
+        )
+
+    def test_single_lifecycle_scores_15(self):
+        doc = self._make_doc(["build"])
+        result = check_fsct(doc)
+        rec = next(r for r in result.records if r.check_key == "fsct_sbom_type")
+        assert rec.score == pytest.approx(15.0)
+
+    def test_multiple_lifecycles_scores_15(self):
+        doc = self._make_doc(["build", "deploy"])
+        result = check_fsct(doc)
+        rec = next(r for r in result.records if r.check_key == "fsct_sbom_type")
+        assert rec.score == pytest.approx(15.0)
+
+    def test_no_lifecycle_scores_0(self):
+        doc = self._make_doc([])
+        result = check_fsct(doc)
+        rec = next(r for r in result.records if r.check_key == "fsct_sbom_type")
+        assert rec.score == pytest.approx(0.0)
+
+
+class TestG6_BSIBomLinksApplicability:
+    """G6: bsi_bom_links applicable only for CycloneDX, not SPDX."""
+
+    def test_bom_links_not_applicable_for_spdx(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            created="2024-01-01T00:00:00Z", components=[],
+        )
+        result = check_bsi(doc, version="v2.0")
+        rec = next((r for r in result.records if r.check_key == "bsi_bom_links"), None)
+        assert rec is not None
+        assert rec.applicable is False
+
+    def test_bom_links_applicable_for_cdx(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(
+            format="cyclonedx", spec_version="1.5",
+            created="2024-01-01T00:00:00Z", components=[],
+        )
+        result = check_bsi(doc, version="v2.0")
+        rec = next((r for r in result.records if r.check_key == "bsi_bom_links"), None)
+        assert rec is not None
+        assert rec.applicable is True
+
+
+class TestG8_BSIManufacturerContact:
+    """G8: BSI contact check should recognise manufacturer field."""
+
+    def test_manufacturer_with_email_counts(self):
+        from app.core.parser import SBOMDocument, Component
+        comp = Component(
+            name="lib", version="1.0",
+            supplier=None,
+            manufacturer="Acme Corp <security@acme.com>",
+        )
+        doc = SBOMDocument(
+            format="cyclonedx", spec_version="1.4",
+            created="2024-01-01T00:00:00Z", authors=["Tool: test"],
+            components=[comp],
+        )
+        result = check_bsi(doc, version="v1.1")
+        rec = next(r for r in result.records if r.check_key == "bsi_comp_creator_contact")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_no_supplier_no_manufacturer_scores_0(self):
+        from app.core.parser import SBOMDocument, Component
+        comp = Component(name="lib", version="1.0")
+        doc = SBOMDocument(
+            format="cyclonedx", spec_version="1.4",
+            created="2024-01-01T00:00:00Z", authors=["Tool: test"],
+            components=[comp],
+        )
+        result = check_bsi(doc, version="v1.1")
+        rec = next(r for r in result.records if r.check_key == "bsi_comp_creator_contact")
+        assert rec.score == pytest.approx(0.0)
+
+
+class TestG11_NTIAMachineReadable:
+    """G11: NTIA machine-readable check must accept yaml, tv, rdf."""
+
+    def _make_doc(self, file_format):
+        from app.core.parser import SBOMDocument
+        return SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            created="2024-01-01T00:00:00Z", components=[],
+            file_format=file_format,
+        )
+
+    def test_yaml_is_machine_readable(self):
+        result = check_ntia(self._make_doc("yaml"))
+        rec = next(r for r in result.records if r.check_key == "sbom_machine_readable_format")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_tv_is_machine_readable(self):
+        result = check_ntia(self._make_doc("tv"))
+        rec = next(r for r in result.records if r.check_key == "sbom_machine_readable_format")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_rdf_is_machine_readable(self):
+        result = check_ntia(self._make_doc("rdf"))
+        rec = next(r for r in result.records if r.check_key == "sbom_machine_readable_format")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_json_still_machine_readable(self):
+        result = check_ntia(self._make_doc("json"))
+        rec = next(r for r in result.records if r.check_key == "sbom_machine_readable_format")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_unknown_format_not_machine_readable(self):
+        result = check_ntia(self._make_doc("docx"))
+        rec = next(r for r in result.records if r.check_key == "sbom_machine_readable_format")
+        assert rec.score == pytest.approx(0.0)
+
+
+class TestG13_OCTOrgStrictPrefix:
+    """G13: OCT Organization: check must require exact prefix, not substring."""
+
+    def test_organization_prefix_passes(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            authors=["Organization: Acme Corp"], components=[], file_format="tv",
+        )
+        result = check_oct(doc)
+        rec = next(r for r in result.records if r.check_key == "oct_sbom_organization")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_no_organization_prefix_fails(self):
+        from app.core.parser import SBOMDocument
+        doc = SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            authors=["Tool: my-org-tool"], components=[], file_format="tv",
+        )
+        result = check_oct(doc)
+        rec = next(r for r in result.records if r.check_key == "oct_sbom_organization")
+        assert rec.score == pytest.approx(0.0)
+
+
+class TestG14_OCTSupplierEmail:
+    """G14: OCT supplier check must use tiered email scoring (0/5/10)."""
+
+    def _make_doc_with_supplier(self, supplier):
+        from app.core.parser import SBOMDocument, Component
+        comp = Component(name="pkg", version="1.0", supplier=supplier)
+        return SBOMDocument(
+            format="spdx", spec_version="SPDX-2.3",
+            created="2024-01-01T00:00:00Z", authors=["Tool: t"],
+            components=[comp], file_format="tv",
+        )
+
+    def test_supplier_with_email_scores_10(self):
+        result = check_oct(self._make_doc_with_supplier("Acme Corp <security@acme.com>"))
+        rec = next(r for r in result.records if r.check_key == "oct_pkg_supplier")
+        assert rec.score == pytest.approx(10.0)
+
+    def test_supplier_without_email_scores_5(self):
+        result = check_oct(self._make_doc_with_supplier("Acme Corp"))
+        rec = next(r for r in result.records if r.check_key == "oct_pkg_supplier")
+        assert rec.score == pytest.approx(5.0)
+
+    def test_absent_supplier_scores_0(self):
+        result = check_oct(self._make_doc_with_supplier("NOASSERTION"))
+        rec = next(r for r in result.records if r.check_key == "oct_pkg_supplier")
+        assert rec.score == pytest.approx(0.0)
+
+    def test_missing_supplier_scores_0(self):
+        result = check_oct(self._make_doc_with_supplier(None))
+        rec = next(r for r in result.records if r.check_key == "oct_pkg_supplier")
+        assert rec.score == pytest.approx(0.0)

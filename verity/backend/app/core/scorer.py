@@ -202,7 +202,7 @@ def _score_structural(doc: SBOMDocument) -> CategoryResult:
     fmt = (doc.format or "").lower()
     version = doc.spec_version or ""
 
-    supported_cdx = {"1.4", "1.5", "1.6"}
+    supported_cdx = {"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"}
     supported_spdx = {"2.1", "2.2", "2.3", "2.2.1", "2.2.2", "2.3.1", "3.0", "3.0.0", "3.0.1"}
 
     spec_detected = fmt in ("cyclonedx", "spdx")
@@ -214,6 +214,15 @@ def _score_structural(doc: SBOMDocument) -> CategoryResult:
         spec_version_ok = any(norm_version.startswith(v) for v in supported_spdx)
     else:
         spec_version_ok = False
+
+    # Per-spec valid serialization formats (G12)
+    file_fmt = getattr(doc, "file_format", "json").lower()
+    if fmt == "cyclonedx":
+        file_format_valid = file_fmt in ("json", "xml")
+    elif fmt == "spdx":
+        file_format_valid = file_fmt in ("json", "yaml", "tv", "tag-value", "tagvalue", "rdf")
+    else:
+        file_format_valid = False
 
     features = [
         FeatureResult(
@@ -233,10 +242,10 @@ def _score_structural(doc: SBOMDocument) -> CategoryResult:
         ),
         FeatureResult(
             key="file_format_valid",
-            score=_boolean(spec_detected),
-            applicable=True,
+            score=_boolean(file_format_valid),
+            applicable=spec_detected,
             weight=0.20,
-            detail="File format matches declared spec",
+            detail=f"File format '{file_fmt}' " + ("valid for " + (doc.format or "") if file_format_valid else "not valid for " + (doc.format or "")),
         ),
         FeatureResult(
             key="schema_valid",
@@ -418,11 +427,13 @@ def _score_provenance(doc: SBOMDocument) -> CategoryResult:
 def _score_integrity(doc: SBOMDocument) -> CategoryResult:
     comps = doc.components
     n = len(comps)
+    fmt = (doc.format or "").lower()
 
     has_any = sum(1 for c in comps if _has_any_checksum(c))
     has_strong = sum(1 for c in comps if _has_strong_checksum(c))
 
-    # Document signature: check metadata attribute set by parser
+    # Document signature: SPDX has no native signing mechanism — N/A for SPDX
+    sig_applicable = fmt != "spdx"
     sig_tier = 0
     sig = getattr(doc, "signature", None)
     if sig:
@@ -462,12 +473,13 @@ def _score_integrity(doc: SBOMDocument) -> CategoryResult:
         FeatureResult(
             key="sbom_signature",
             score=_tiered(sig_tier),
-            applicable=True,
+            applicable=sig_applicable,
             weight=0.10,
             detail=(
                 "Document signature verified" if sig_tier == 2
                 else "Document signature present (no key material)" if sig_tier == 1
-                else "No document signature"
+                else "No document signature" if sig_applicable
+                else "N/A — SPDX has no native document signing mechanism"
             ),
         ),
     ]

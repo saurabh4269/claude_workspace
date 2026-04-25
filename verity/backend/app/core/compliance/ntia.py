@@ -280,27 +280,27 @@ def check_ntia(doc: SBOMDocument) -> NTIAResult:
 
     # -----------------------------------------------------------------------
     # Element 9: Machine-readable Format (recommended)
-    # NTIA guidance: SBOM should be in a machine-readable format (JSON or XML)
-    # to enable automated processing. Tag-value (.spdx) is human-readable but
-    # not machine-parseable by the majority of consumer tooling.
+    # NTIA guidance: SBOM should be in a machine-readable format — JSON, XML,
+    # YAML, SPDX tag-value, and RDF all qualify per NTIA guidance.
     # -----------------------------------------------------------------------
-    machine_readable = getattr(doc, "file_format", "json") in ("json", "xml")
-    mr_score = 10.0 if machine_readable else 0.0
+    _MACHINE_READABLE_FORMATS = frozenset({"json", "xml", "yaml", "tv", "tag-value", "tagvalue", "rdf"})
     file_fmt = getattr(doc, "file_format", "json")
+    machine_readable = file_fmt in _MACHINE_READABLE_FORMATS
+    mr_score = 10.0 if machine_readable else 0.0
     records.append(_req(
         "sbom_machine_readable_format",
         mr_score,
         "document",
         file_fmt,
-        "JSON or XML encoding",
-        f"Machine-readable format ({file_fmt})" if machine_readable else f"Format '{file_fmt}' has limited machine-readability",
+        "JSON, XML, YAML, tag-value, or RDF encoding",
+        f"Machine-readable format ({file_fmt})" if machine_readable else f"Format '{file_fmt}' not recognized as machine-readable",
     ))
     elements.append(NTIAElementResult(
         element_name="Machine-readable Format",
         compliant=machine_readable,
         score=mr_score,
         failing_components=[],
-        detail=f"SBOM encoding: {file_fmt} ({'machine-readable' if machine_readable else 'limited machine-readability'})",
+        detail=f"SBOM encoding: {file_fmt} ({'machine-readable' if machine_readable else 'not recognized as machine-readable'})",
     ))
 
     overall_score = compliance_score(records)

@@ -86,14 +86,13 @@ def check_fsct(doc: SBOMDocument) -> FSCTResult:
     records.append(_req("fsct_sbom_timestamp", 10.0 if has_ts else 0.0, "document",
                         doc.created or "", "RFC3339 timestamp", ""))
 
-    # Type/lifecycle: 0=none, 10=one lifecycle, 15=multiple (aspirational)
+    # Type/lifecycle: 0=none, 15=declared (FSCT v3 aspirational tier — binary)
     lifecycles = getattr(doc, "lifecycles", None) or []
     has_lifecycle = bool(lifecycles)
-    lifecycle_score = 15.0 if len(lifecycles) > 1 else (10.0 if has_lifecycle else 0.0)
+    lifecycle_score = 15.0 if has_lifecycle else 0.0
     records.append(_add("fsct_sbom_type", lifecycle_score, True, "document",
-                        str(lifecycles), "Lifecycle phase declared",
-                        f"Multiple lifecycles (aspirational): {lifecycles}" if lifecycle_score == 15.0
-                        else f"Lifecycle declared: {lifecycles}" if has_lifecycle
+                        str(lifecycles), "Lifecycle phase declared (aspirational: 15 pts)",
+                        f"Lifecycle declared (aspirational): {lifecycles}" if has_lifecycle
                         else "No lifecycle declared"))
 
     # Primary component

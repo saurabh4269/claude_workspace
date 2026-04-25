@@ -22,6 +22,7 @@ _SCHEMA_MAP: dict[tuple[str, str], str] = {
     ("cyclonedx", "1.4"): "cyclonedx-1.4.schema.json",
     ("cyclonedx", "1.5"): "cyclonedx-1.5.schema.json",
     ("cyclonedx", "1.6"): "cyclonedx-1.6.schema.json",
+    ("cyclonedx", "1.7"): "cyclonedx-1.7.schema.json",
     ("spdx",      "2.2"): "spdx-2.2.schema.json",
     ("spdx",      "2.3"): "spdx-2.3.schema.json",
 }
