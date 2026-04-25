@@ -203,7 +203,7 @@ def _score_structural(doc: SBOMDocument) -> CategoryResult:
     version = doc.spec_version or ""
 
     supported_cdx = {"1.4", "1.5", "1.6"}
-    supported_spdx = {"2.2", "2.3", "2.2.1", "2.2.2", "2.3.1", "3.0", "3.0.0", "3.0.1"}
+    supported_spdx = {"2.1", "2.2", "2.3", "2.2.1", "2.2.2", "2.3.1", "3.0", "3.0.0", "3.0.1"}
 
     spec_detected = fmt in ("cyclonedx", "spdx")
     # SPDX encodes version as "SPDX-2.3" — strip the prefix for comparison
@@ -477,6 +477,7 @@ def _score_integrity(doc: SBOMDocument) -> CategoryResult:
 
 # ---------------------------------------------------------------------------
 # Category 5: License Compliance (weight 15)
+# Weights aligned with sbomqs v2.0 catalog.
 # ---------------------------------------------------------------------------
 
 def _score_licensing(doc: SBOMDocument) -> CategoryResult:
@@ -491,8 +492,8 @@ def _score_licensing(doc: SBOMDocument) -> CategoryResult:
 
     if n == 0:
         features = [
-            FeatureResult("comp_has_license", 0.0, False, 0.25, "No components"),
-            FeatureResult("comp_has_valid_spdx_license", 0.0, False, 0.25, "No components"),
+            FeatureResult("comp_has_license", 0.0, False, 0.20, "No components"),
+            FeatureResult("comp_has_valid_spdx_license", 0.0, False, 0.20, "No components"),
             FeatureResult("comp_has_declared_license", 0.0, False, 0.15, "No components"),
             FeatureResult("comp_no_deprecated_license", 0.0, False, 0.15, "No components"),
             FeatureResult("comp_no_restrictive_license", 0.0, False, 0.20, "No components"),
@@ -545,14 +546,14 @@ def _score_licensing(doc: SBOMDocument) -> CategoryResult:
             key="comp_has_license",
             score=_per_component(has_license, n),
             applicable=True,
-            weight=0.25,
+            weight=0.20,
             detail=f"{has_license}/{n} components have license info",
         ),
         FeatureResult(
             key="comp_has_valid_spdx_license",
             score=_per_component(has_valid_spdx, has_license) if has_license else 0.0,
             applicable=has_license > 0,
-            weight=0.25,
+            weight=0.20,
             detail=f"{has_valid_spdx}/{has_license} licensed components use valid SPDX IDs",
         ),
         FeatureResult(
@@ -589,10 +590,12 @@ def _score_licensing(doc: SBOMDocument) -> CategoryResult:
 
 
 # ---------------------------------------------------------------------------
-# Category 7: Vulnerability & Traceability (weight 10)
-# PURL and CPE are the primary mechanism for matching components against
-# vulnerability feeds (NVD, OSV, GHSA). A malformed or absent identifier
-# cannot match any feed, so presence and syntax validity are combined.
+# Category 6: Vulnerability & Traceability (weight 10)
+# PURL enables OSV/GHSA/ecosystem matching; CPE enables NVD matching.
+# Both are given equal weight (0.50/0.50) because both are first-class NTIA
+# unique identifiers and cover different vulnerability databases.
+# CPE is always applicable — its absence is a real quality gap even when
+# PURLs are present, because NVD-based scanning cannot proceed without CPEs.
 # ---------------------------------------------------------------------------
 
 def _score_vuln_traceability(doc: SBOMDocument) -> CategoryResult:
@@ -602,20 +605,12 @@ def _score_vuln_traceability(doc: SBOMDocument) -> CategoryResult:
     if n == 0:
         features = [
             FeatureResult("comp_with_valid_purl", 0.0, False, 0.50, "No components"),
-            FeatureResult("comp_with_valid_cpe", 0.0, False, 0.30, "No components"),
-            FeatureResult("comp_with_any_vuln_id", 0.0, False, 0.20, "No components"),
+            FeatureResult("comp_with_valid_cpe", 0.0, False, 0.50, "No components"),
         ]
         return CategoryResult("Vulnerability & Traceability", 10, 0.0, features)
 
     valid_purl = sum(1 for c in comps if _is_valid_purl(c.purl or ""))
     valid_cpe = sum(1 for c in comps if _is_valid_cpe(c.cpe or ""))
-    has_one_id = sum(
-        1 for c in comps
-        if _is_valid_purl(c.purl or "") or _is_valid_cpe(c.cpe or "")
-    )
-
-    # CPE applicable only when at least one component declares a CPE
-    any_cpe = any(c.cpe for c in comps)
 
     features = [
         FeatureResult(
@@ -627,18 +622,10 @@ def _score_vuln_traceability(doc: SBOMDocument) -> CategoryResult:
         ),
         FeatureResult(
             key="comp_with_valid_cpe",
-            score=_per_component(valid_cpe, n) if any_cpe else 0.0,
-            applicable=any_cpe,
-            weight=0.30,
-            detail=f"{valid_cpe}/{n} components have syntactically valid CPEs"
-                   if any_cpe else "No CPEs declared — N/A",
-        ),
-        FeatureResult(
-            key="comp_with_any_vuln_id",
-            score=_per_component(has_one_id, n),
+            score=_per_component(valid_cpe, n),
             applicable=True,
-            weight=0.20,
-            detail=f"{has_one_id}/{n} components have at least one valid PURL or CPE",
+            weight=0.50,
+            detail=f"{valid_cpe}/{n} components have syntactically valid CPEs",
         ),
     ]
 
@@ -647,6 +634,9 @@ def _score_vuln_traceability(doc: SBOMDocument) -> CategoryResult:
 
 # ---------------------------------------------------------------------------
 # Category 7: Completeness (weight 12)
+# Weights aligned with sbomqs v2.0 catalog. sbom_dependency_graph is NOT a
+# separate feature — whether any dep edges exist is already captured by
+# comp_with_dependencies (per-component coverage at 0.25 weight).
 # ---------------------------------------------------------------------------
 
 def _score_completeness(doc: SBOMDocument) -> CategoryResult:
@@ -660,16 +650,13 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
 
     # Dependency graph
     dep_graph = getattr(doc, "dependency_graph", None)
-    has_deps = bool(dep_graph and dep_graph.get("edges"))
     is_cdx = fmt == "cyclonedx"
     # CDX-only: compositions/completeness declarations
     compositions = getattr(doc, "compositions", None) or []
     has_completeness = bool(compositions)
 
-    # ARCH-02: comp_with_dependencies is N/A for SPDX SBOMs that have no
-    # DEPENDS_ON/CONTAINS edges. CycloneDX has an explicit per-component
-    # dependencies[] array, so it's always applicable. SPDX tracks the same
-    # info via document-level relationships — only applicable when those exist.
+    # comp_with_dependencies is N/A for SPDX SBOMs that have no DEPENDS_ON edges.
+    # CDX has an explicit per-component dependencies[] array (always applicable).
     dep_edges = dep_graph.get("edges", []) if dep_graph else []
     dep_type_edges = [
         e for e in dep_edges
@@ -682,14 +669,12 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
         features = [
             FeatureResult("primary_component", _boolean(has_primary), True, 0.20,
                           "Primary component: " + ("identified" if has_primary else "missing")),
-            FeatureResult("sbom_dependency_graph", _boolean(has_deps), True, 0.15,
-                          "Dependency graph: " + ("present" if has_deps else "missing")),
-            FeatureResult("comp_with_dependencies", 0.0, False, 0.10, "No components"),
-            FeatureResult("sbom_completeness_declared", _boolean(has_completeness), is_cdx, 0.05,
-                          "Compositions/completeness: " + ("declared" if has_completeness else "missing")),
-            FeatureResult("comp_with_supplier", 0.0, False, 0.20, "No components"),
+            FeatureResult("comp_with_dependencies", 0.0, False, 0.25, "No components"),
+            FeatureResult("sbom_completeness_declared", _boolean(has_completeness), is_cdx, 0.15,
+                          "Completeness declared: " + ("yes" if has_completeness else "missing")),
+            FeatureResult("comp_with_supplier", 0.0, False, 0.15, "No components"),
             FeatureResult("comp_with_source_url", 0.0, False, 0.15, "No components"),
-            FeatureResult("comp_with_purpose", 0.0, False, 0.15, "No components"),
+            FeatureResult("comp_with_purpose", 0.0, False, 0.10, "No components"),
         ]
         return CategoryResult("Completeness", 12, _category_score(features), features)
 
@@ -715,17 +700,10 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
             detail="Primary component: " + ("identified" if has_primary else "not identified"),
         ),
         FeatureResult(
-            key="sbom_dependency_graph",
-            score=_boolean(has_deps),
-            applicable=True,
-            weight=0.15,
-            detail="Dependency relationships: " + ("declared" if has_deps else "none"),
-        ),
-        FeatureResult(
             key="comp_with_dependencies",
-            score=_per_component(has_comp_deps, n) if has_deps else 0.0,
+            score=_per_component(has_comp_deps, n) if comp_deps_applicable else 0.0,
             applicable=comp_deps_applicable,
-            weight=0.10,
+            weight=0.25,
             detail=(
                 f"{has_comp_deps}/{n} components appear in dependency graph"
                 if comp_deps_applicable
@@ -736,14 +714,14 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
             key="sbom_completeness_declared",
             score=_boolean(has_completeness),
             applicable=is_cdx,
-            weight=0.05,
-            detail="Compositions/completeness: " + ("declared" if has_completeness else "missing"),
+            weight=0.15,
+            detail="Dependency completeness declared: " + ("yes (compositions present)" if has_completeness else "not declared"),
         ),
         FeatureResult(
             key="comp_with_supplier",
             score=_per_component(has_supplier, n),
             applicable=True,
-            weight=0.20,
+            weight=0.15,
             detail=f"{has_supplier}/{n} components have supplier",
         ),
         FeatureResult(
@@ -757,7 +735,7 @@ def _score_completeness(doc: SBOMDocument) -> CategoryResult:
             key="comp_with_purpose",
             score=_per_component(has_purpose, n),
             applicable=True,
-            weight=0.15,
+            weight=0.10,
             detail=f"{has_purpose}/{n} components declare a type/purpose",
         ),
     ]
@@ -928,13 +906,15 @@ def score(
     """
     Compute the quality score for an SBOMDocument.
 
-    Returns a QualityScore with per-category breakdowns and an overall score + grade.
-    Categories 1–7 are structural quality metrics. Category 8 (Component Security
-    Health) is appended when vuln_results are provided.
+    Categories 1–7 are structural quality metrics and form the basis of the
+    overall score (base denominator: 82). Category 8 (Component Security Health)
+    is appended for display when vuln_results are provided, but is EXCLUDED from
+    the overall score denominator — it measures software security posture, not
+    SBOM document quality.
 
     eol_results: optional dict from eol_checker.check_eol_async — {comp_id: bool|None}
     """
-    categories = [
+    structural_categories = [
         _score_structural(doc),
         _score_identity(doc),
         _score_provenance(doc),
@@ -944,14 +924,17 @@ def score(
         _score_completeness(doc),
     ]
 
-    if vuln_results is not None:
-        categories.append(_score_security_health(doc, vuln_results, eol_results))
+    # Overall score is always derived from the 7 structural categories only.
+    overall = _overall_score(structural_categories)
 
-    overall = _overall_score(categories)
+    all_categories = structural_categories.copy()
+    if vuln_results is not None:
+        all_categories.append(_score_security_health(doc, vuln_results, eol_results))
+
     return QualityScore(
         overall_score=overall,
         grade=_grade(overall),
-        categories=categories,
+        categories=all_categories,
         sbom_format=doc.format or "unknown",
         total_components=len(doc.components),
     )

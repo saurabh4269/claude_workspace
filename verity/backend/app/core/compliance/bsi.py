@@ -199,11 +199,42 @@ def _check_bsi_v11(doc: SBOMDocument) -> list[ComplianceRecord]:
         records.append(_add("bsi_comp_creator_contact", 10.0 if comp_contact else 0.0, True, cid,
                             comp.supplier or "", "Supplier email or URL", ""))
 
-        # Source code URL (SHOULD)
+        # Source code URL (SHOULD — BSI §5.3)
         from app.core.scorer import _has_source_url
         src_ok = _has_source_url(comp)
         records.append(_add("bsi_comp_source_url", 10.0 if src_ok else 0.0, True, cid,
                             "", "VCS source URL", "Source URL found" if src_ok else "No source URL"))
+
+        # Download URL (SHOULD — BSI TR-03183-2 v1.1 §5.3)
+        dl = getattr(comp, "download_location", None) or ""
+        dl_ok = bool(dl.strip()) and dl.strip().upper() not in ("NOASSERTION", "NONE")
+        records.append(_add("bsi_comp_download_url", 10.0 if dl_ok else 0.0, True, cid,
+                            dl or "", "Download URL (not NOASSERTION/NONE)",
+                            f"Download URL: {dl}" if dl_ok else "No download URL"))
+
+        # Source code hash (SHOULD — BSI TR-03183-2 v1.1 §5.3)
+        # Applicable only for CDX components that declare a VCS external reference with hashes.
+        # For SPDX, PackageChecksum does not distinguish source vs binary — always N/A here.
+        ext_refs = getattr(comp, "external_references", []) or []
+        vcs_ref_with_hash = None
+        for ref in ext_refs:
+            if not isinstance(ref, dict):
+                continue
+            rtype = (ref.get("type") or ref.get("referenceType") or "").lower()
+            if rtype in ("vcs", "source-distribution"):
+                ref_hashes = ref.get("hashes") or {}
+                if isinstance(ref_hashes, dict) and ref_hashes:
+                    vcs_ref_with_hash = ref_hashes
+                    break
+        src_hash_applicable = bool(vcs_ref_with_hash is not None)
+        src_hash_ok = bool(vcs_ref_with_hash)
+        records.append(_add("bsi_comp_source_hash", 10.0 if src_hash_ok else 0.0,
+                            src_hash_applicable, cid,
+                            str(list(vcs_ref_with_hash.keys())) if vcs_ref_with_hash else "",
+                            "Hash on VCS/source external reference",
+                            "Source hash found" if src_hash_ok
+                            else ("VCS ref present but no hashes" if src_hash_applicable
+                                  else "N/A — no VCS external reference")))
 
         # PURL or CPE (SHOULD)
         has_id = _is_valid_purl(comp.purl or "") or _is_valid_cpe(comp.cpe or "")
@@ -274,8 +305,10 @@ def _check_bsi_v20(doc: SBOMDocument) -> list[ComplianceRecord]:
                         else "Signature present but no key material" if sig_score == 5.0
                         else "No document signature"))
 
-    # Per-component: filename (SHALL in v2.0) + type properties (MAY in v2.0)
+    # Per-component: filename (SHALL in v2.0), concluded license (SHOULD in v2.0,
+    # CDX 1.6 only via acknowledgement=concluded), type properties (MAY in v2.0)
     _BSI_TYPE_PROPS = ("bsi:component:executable", "bsi:component:archive", "bsi:component:structured")
+    is_cdx16 = fmt == "cyclonedx" and version.startswith("1.6")
     for comp in doc.components:
         cid = comp.name or "unknown"
         props = getattr(comp, "properties", {}) or {}
@@ -283,6 +316,27 @@ def _check_bsi_v20(doc: SBOMDocument) -> list[ComplianceRecord]:
         records.append(_req("bsi_comp_filename", 10.0 if filename else 0.0, cid,
                             filename or "", "Component filename",
                             "Filename found" if filename else "No filename"))
+
+        # Concluded license (SHOULD — BSI v2.0, CDX 1.6 acknowledgement=concluded only)
+        # For CDX 1.6: comp.licenses contains ALL licenses (declared + concluded); a concluded
+        # license is one NOT in declared_licenses. For CDX < 1.6 and SPDX: check is N/A because
+        # the acknowledgement attribute does not exist — the spec cannot distinguish them.
+        if is_cdx16:
+            declared_set = set(getattr(comp, "declared_licenses", None) or [])
+            all_lics = [l for l in (comp.licenses or []) if not is_absent(l)]
+            concluded_lics = [l for l in all_lics if l not in declared_set]
+            has_concluded = bool(concluded_lics) and all(
+                is_valid_spdx(l) or l.startswith("LicenseRef-") for l in concluded_lics
+            )
+            records.append(_add("bsi_comp_concluded_license", 10.0 if has_concluded else 0.0,
+                                True, cid, str(concluded_lics),
+                                "Concluded license with valid SPDX ID (CDX 1.6 acknowledgement=concluded)",
+                                "Concluded license found" if has_concluded
+                                else "No concluded license (acknowledgement=concluded required for CDX 1.6)"))
+        else:
+            records.append(_add("bsi_comp_concluded_license", 0.0, False, cid, "",
+                                "Concluded license (CDX 1.6 only)",
+                                "N/A — concluded vs declared not distinguishable in this format/version"))
 
         # BSI-specific component type property (MAY — at least one of the three)
         has_type_prop = any(props.get(p) for p in _BSI_TYPE_PROPS)

@@ -13,10 +13,11 @@ class TestProfileScoring:
         assert 0.0 <= ps.profile_score <= 10.0
         assert ps.grade in ("A", "B", "C", "D", "F")
 
-    def test_ntia_profile_has_7_features(self, cdx_json_doc):
+    def test_ntia_profile_has_8_features(self, cdx_json_doc):
+        # NTIA element 4 (Unique Identifiers) is split into PURL + CPE sub-features
         qs = score(cdx_json_doc)
         ps = score_ntia_profile(qs)
-        assert len(ps.features) == 7
+        assert len(ps.features) == 8
 
     def test_bsi_v21_profile_returns_result(self, cdx_json_doc):
         qs = score(cdx_json_doc)

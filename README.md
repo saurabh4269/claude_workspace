@@ -8,8 +8,8 @@ Verity automates the validation and risk assessment of Software Bill of Material
 
 ## Features
 
-- **Multi-format parsing** — CycloneDX JSON/XML (1.4–1.6), SPDX JSON/YAML/tag-value (2.2–2.3, 3.0)
-- **Quality scoring** — weighted 0–10 score across 7 categories (Structural, Identification, Provenance, Integrity, Licensing, Vulnerability & Traceability, Completeness) with letter grade A–F; base weight total 82
+- **Multi-format parsing** — CycloneDX JSON/XML (1.4–1.6), SPDX JSON/YAML/tag-value (**2.1**, 2.2–2.3, 3.0)
+- **Quality scoring** — weighted 0–10 score across 7 categories (Structural, Identification, Provenance, Integrity, Licensing, Vulnerability & Traceability, Completeness) with letter grade A–F; base weight total 82; Component Security Health (weight 8) appended separately when vulnerability data is available
 - **Compliance validation** — NTIA Minimum Elements, BSI TR-03183-2 (v1.1 / v2.0 / v2.1), FSCT v3, OpenChain Telco v1.1
 - **Scored compliance profiles** — continuous 0–10 profile score against NTIA, BSI v2.1, FSCT v3, or OpenChain Telco; selectable at scan time; exposed in the UI Profile tab and PDF report
 - **Risk scoring** — per-component scores based on missing fields, license type (AGPL/GPL/LGPL tiers), and CVE severity; document-level escalation when >30% of components are HIGH+
@@ -97,8 +97,8 @@ Every scan produces a 0–10 quality score and a letter grade (A–F) computed a
 | Provenance | 12 | Creation timestamp, authors, tool versions, namespace, supplier, lifecycle |
 | Integrity | 15 | Checksums (any and strong SHA-256+), document-level signature |
 | License Compliance | 15 | License presence, SPDX validity, declared licenses, deprecated/restrictive license detection |
-| Vulnerability & Traceability | 10 | PURL and CPE syntax validity; at least one valid identifier per component |
-| Completeness | 12 | Primary component, dependency graph, per-component supplier/source/type |
+| Vulnerability & Traceability | 10 | PURL and CPE syntax validity — both always applicable (absence is a scoring gap) |
+| Completeness | 12 | Primary component, dependency coverage, per-component supplier/source/type |
 
 An optional **Component Security Health** category (weight 8) is appended when vulnerability results are available, covering vulnerable components, critical CVEs, EOL components, and malicious packages. It does not contribute to the base denominator.
 
@@ -118,11 +118,11 @@ An optional **Component Security Health** category (weight 8) is appended when v
 
 | Standard | Scope | Notes |
 |---|---|---|
-| NTIA Minimum Elements (2021) | 7 required elements | Per-component name, version, supplier, unique ID; document author, timestamp, dependency relationships |
+| NTIA Minimum Elements (2021) | 7 required elements (8 profile features) | Per-component name, version, supplier, PURL, CPE; document author, timestamp, dependency relationships |
 | BSI TR-03183-2 v1.1 | SHALL + SHOULD tiers | CDX 1.4+ / SPDX ≥ 2.2; creator, SHA-256 hash, license, dependency resolution |
 | BSI TR-03183-2 v2.0 | Adds: no vuln data, signature, BOM links | CDX 1.5+ / SPDX 2.2.1+; filename property, completeness declaration |
 | BSI TR-03183-2 v2.1 | Latest — CDX 1.6 only | SHA-512 on deployable artifact, declared licenses (acknowledgement field), SBOM URI promoted to SHALL |
-| FSCT v3 | Multi-level scoring (0/10/12/15) | SBOM author, lifecycle, relationships, per-component checksum (strong=12), license quality; raw score exposed separately |
+| FSCT v3 | Multi-level scoring (0/10/12/15) | Author 10=name/12=name+contact; checksum 10=any/12=strong; license 10=any/12=SPDX/15=SPDX+URL; raw score exposed separately |
 | OpenChain Telco v1.1 | SPDX only | 27 document + component checks; org/tool creator split, SHA-256 normalised, PURL, concluded/declared license, copyright text |
 
 ### Scored Compliance Profiles
@@ -281,6 +281,7 @@ verity/
 │   │   │   ├── policy.py          # YAML policy engine
 │   │   │   ├── compliance/        # NTIA, BSI, FSCT, OCT pass/fail checkers
 │   │   │   ├── profiles/          # Scored compliance profiles (NTIA, BSI, FSCT, OCT)
+│   │   │   ├── validation/        # Embedded CycloneDX/SPDX JSON schemas + jsonschema validator
 │   │   │   └── licenses/          # SPDX license database and validator
 │   │   ├── api/
 │   │   │   ├── routes/            # scans, workspaces, auth, ci, settings

@@ -69,16 +69,16 @@ def check_fsct(doc: SBOMDocument) -> FSCTResult:
     # SBOM-level checks
     # -----------------------------------------------------------------------
 
-    # Author: 10=name only, 12=name+contact (we cap at 10 for scoring denominator)
+    # Author: 10=name only (minimum), 12=name+contact info (recommended per FSCT v3)
     has_author = bool(doc.authors and any(a.strip() for a in doc.authors))
     has_author_contact = has_author and any(
         "@" in a or "http" in a for a in (doc.authors or [])
     )
-    author_score = 10.0 if has_author else 0.0
+    author_score = 12.0 if has_author_contact else (10.0 if has_author else 0.0)
     records.append(_req("fsct_sbom_author", author_score, "document",
-                        str(doc.authors or []), "Author with name",
-                        "Author found with contact" if has_author_contact
-                        else "Author found (name only)" if has_author
+                        str(doc.authors or []), "Author with name (12=adds contact info)",
+                        "Author found with contact info (recommended)" if has_author_contact
+                        else "Author found — name only (minimum)" if has_author
                         else "No author found"))
 
     # Timestamp
@@ -164,19 +164,28 @@ def check_fsct(doc: SBOMDocument) -> FSCTResult:
                             else "Weak checksum (SHA-1/MD5) — minimum only" if has_any_hash
                             else "No checksum"))
 
-        # License: 0=none, partial=5, SPDX=10
+        # License: FSCT v3 four-tier scoring (0/10/12/15)
+        #   0  = no license information
+        #  10  = any license name present (minimum)
+        #  12  = valid SPDX license ID (recommended)
+        #  15  = SPDX ID + URL or embedded text confirming license terms (aspirational)
         lics = [l for l in (comp.licenses or []) if not is_absent(l)]
+        has_spdx = lics and all(is_valid_spdx(l) for l in lics)
+        has_url_or_text = getattr(comp, "license_has_url_or_text", False)
         if not lics:
             lic_score = 0.0
-            lic_detail = "No license"
-        elif all(is_valid_spdx(l) for l in lics):
-            lic_score = 10.0
-            lic_detail = "Valid SPDX license"
+            lic_detail = "No license information"
+        elif has_spdx and has_url_or_text:
+            lic_score = 15.0
+            lic_detail = "Valid SPDX ID + license URL/text (aspirational)"
+        elif has_spdx:
+            lic_score = 12.0
+            lic_detail = "Valid SPDX license ID (recommended)"
         else:
-            lic_score = 5.0
-            lic_detail = "License name present but not valid SPDX ID"
+            lic_score = 10.0
+            lic_detail = "License name present (minimum — not a valid SPDX ID)"
         records.append(_req("fsct_comp_license", lic_score, cid,
-                            str(lics), "Valid SPDX license ID", lic_detail))
+                            str(lics), "License ID=10/SPDX=12/SPDX+URL=15", lic_detail))
 
         # Copyright
         copyright_text = getattr(comp, "copyright", None) or ""

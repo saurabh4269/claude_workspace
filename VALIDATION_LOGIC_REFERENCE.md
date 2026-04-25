@@ -37,9 +37,9 @@ This document describes every scoring rule, compliance check, and risk heuristic
 |--------|-----------------|---------------------|
 | CycloneDX JSON | `bomFormat: CycloneDX` key | 1.4, 1.5, 1.6 |
 | CycloneDX XML | `<bom xmlns=...cyclonedx...>` root | 1.4, 1.5, 1.6 |
-| SPDX JSON | `spdxVersion` key | 2.2, 2.2.1, 2.2.2, 2.3, 3.0, 3.0.0, 3.0.1 |
-| SPDX Tag-Value | `SPDXVersion:` line | 2.2, 2.2.1, 2.2.2, 2.3, 3.0, 3.0.0, 3.0.1 |
-| SPDX YAML | `.yaml`/`.yml` extension + `spdxVersion` key | 2.2, 2.2.1, 2.2.2, 2.3, 3.0, 3.0.0, 3.0.1 |
+| SPDX JSON | `spdxVersion` key | **2.1**, 2.2, 2.2.1, 2.2.2, 2.3, 2.3.1, 3.0, 3.0.0, 3.0.1 |
+| SPDX Tag-Value | `SPDXVersion:` line | **2.1**, 2.2, 2.2.1, 2.2.2, 2.3, 2.3.1, 3.0, 3.0.0, 3.0.1 |
+| SPDX YAML | `.yaml`/`.yml` extension + `spdxVersion` key | **2.1**, 2.2, 2.2.1, 2.2.2, 2.3, 2.3.1, 3.0, 3.0.0, 3.0.1 |
 
 SPDX YAML is parsed by loading the YAML into a dict and passing it through the same path as SPDX JSON. The internal `file_format` field is set to `"yaml"` to distinguish it for display and for schema-validation applicability rules.
 
@@ -101,10 +101,10 @@ Checks whether the SBOM file is well-formed and uses a recognized spec version.
 | `spec_detected` | 0.30 | Format auto-detected as CycloneDX or SPDX | True |
 | `spec_version_supported` | 0.30 | Spec version is in the known-good set | CDX: 1.4/1.5/1.6; SPDX: 2.2/2.2.1/2.2.2/2.3/3.0/3.0.0/3.0.1 |
 | `file_format_valid` | 0.20 | Detected format matches declared spec | True |
-| `schema_valid` | 0.20 | JSON required fields present (`bomFormat` + `specVersion` for CDX; `spdxVersion` for SPDX) | True — **N/A** for XML and tag-value |
+| `schema_valid` | 0.20 | Full JSON Schema validation against embedded official schemas (CycloneDX 1.4/1.5/1.6; SPDX 2.2/2.3) | True — **N/A** for XML and tag-value |
 
 **Notes for SME review:**
-- Schema validation is lightweight (required-fields check), not a full JSON Schema validation against the official CycloneDX/SPDX JSON Schemas.
+- JSON Schema validation uses the `jsonschema` library against the official CycloneDX and SPDX published schemas embedded in `app/core/validation/schemas/`. For versions without an embedded schema (e.g. SPDX 2.1, CDX 1.3), validation is skipped and the field returns `True` (not invalid).
 - SPDX 3.x versions (3.0, 3.0.0, 3.0.1) are fully recognized for spec version scoring.
 
 ---
@@ -174,8 +174,8 @@ Checks whether licenses are declared, use valid SPDX identifiers, and are not de
 
 | Feature key | Weight | What is checked |
 |-------------|--------|-----------------|
-| `comp_has_license` | 0.25 | Component has at least one non-absent license (not NOASSERTION/NONE) |
-| `comp_has_valid_spdx_license` | 0.25 | All licenses are valid SPDX identifiers — **N/A** if no component has a license |
+| `comp_has_license` | 0.20 | Component has at least one non-absent license (not NOASSERTION/NONE) |
+| `comp_has_valid_spdx_license` | 0.20 | All licenses are valid SPDX identifiers — **N/A** if no component has a license |
 | `comp_has_declared_license` | 0.15 | Separate upstream-declared license field populated (CDX `acknowledgement=declared`; SPDX `PackageLicenseDeclared`) |
 | `comp_no_deprecated_license` | 0.15 | No deprecated SPDX identifiers used (e.g. `GPL-2.0+`) |
 | `comp_no_restrictive_license` | 0.20 | No strong copyleft licenses (GPL, AGPL, etc.) — see [Section 9](#9-license-classification) |
@@ -196,9 +196,10 @@ Checks whether components carry valid machine-readable identifiers for vulnerabi
 
 | Feature key | Weight | What is checked |
 |-------------|--------|-----------------|
-| `comp_with_valid_purl` | 0.50 | PURL present **and** matches `pkg:<type>/<name>[@version]` — **N/A** if no PURLs present |
-| `comp_with_valid_cpe` | 0.30 | CPE present **and** matches CPE 2.3 or CPE 2.2 pattern — **N/A** if no CPEs present |
-| `comp_with_any_vuln_id` | 0.20 | Component has at least one syntactically valid PURL **or** CPE |
+| `comp_with_valid_purl` | 0.50 | PURL present **and** matches `pkg:<type>/<name>[@version]` — **always applicable** |
+| `comp_with_valid_cpe` | 0.50 | CPE present **and** matches CPE 2.3 or CPE 2.2 pattern — **always applicable** |
+
+Both features are always applicable: absence of PURLs or CPEs is a real quality gap (NVD cannot match without a CPE; OSV is less precise without a PURL), so they must contribute to the score rather than being excluded from the denominator.
 
 **PURL pattern:** `^pkg:[a-zA-Z][a-zA-Z0-9.+\-]*/[^@\s]+` — validates type and namespace/name. Does not validate type-specific rules.
 
@@ -207,6 +208,7 @@ Checks whether components carry valid machine-readable identifiers for vulnerabi
 **Notes for SME review:**
 - PURL validation does not verify that the package type is a registered type. `pkg:foobar/xyz` passes syntax validation.
 - CPE 2.2 matching (`^cpe:/`) is permissive.
+- `comp_with_any_vuln_id` was removed. The two features above cover the same ground with more granularity and avoid double-counting.
 
 ---
 
@@ -217,12 +219,13 @@ Checks whether the SBOM describes its dependency graph and provides full supplie
 | Feature key | Weight | What is checked | Applicable |
 |-------------|--------|-----------------|------------|
 | `primary_component` | 0.20 | The top-level component being described is identified | Always |
-| `sbom_dependency_graph` | 0.15 | At least one dependency edge declared | Always |
-| `comp_with_dependencies` | 0.10 | How many components appear as a source node in the graph | CDX always; SPDX only when at least one `DEPENDS_ON` relationship exists |
-| `sbom_completeness_declared` | 0.05 | `compositions` section present (CDX) declaring completeness | CDX only |
-| `comp_with_supplier` | 0.20 | Non-empty supplier per component | Always |
+| `comp_with_dependencies` | 0.25 | How many components appear as a source node in the graph | CDX always; SPDX only when at least one `DEPENDS_ON` relationship exists |
+| `sbom_completeness_declared` | 0.15 | `compositions` section present (CDX) declaring completeness | CDX only |
+| `comp_with_supplier` | 0.15 | Non-empty supplier per component | Always |
 | `comp_with_source_url` | 0.15 | VCS or distribution external reference per component | Always |
-| `comp_with_purpose` | 0.15 | Non-empty component type/purpose field | Always |
+| `comp_with_purpose` | 0.10 | Non-empty component type/purpose field | Always |
+
+`sbom_dependency_graph` (formerly a separate 0.15-weight feature checking "at least one edge exists") was removed. Its intent is now captured by `comp_with_dependencies` at a higher weight (0.25), which measures how many components are wired into the graph — a stricter and more informative signal.
 
 **`comp_with_dependencies` N/A rule for SPDX:** SPDX uses `DESCRIBES` and `CONTAINS` relationships to identify the document structure; only `DEPENDS_ON` relationships constitute dependency edges. If no `DEPENDS_ON` edges exist in an SPDX document, this feature is marked `applicable=False` rather than scoring 0, because an SPDX document without `DEPENDS_ON` may still correctly encode a complete component list — it simply did not declare transitive dependencies.
 
@@ -264,22 +267,25 @@ Features absent from the QualityScore or marked `applicable=False` are excluded 
 
 | Profile key | Standard | Feature count |
 |-------------|----------|---------------|
-| `ntia` | NTIA Minimum Elements | 7 |
+| `ntia` | NTIA Minimum Elements | 8 |
 | `bsi` / `bsi-v2.1` | BSI TR-03183-2 v2.1 | 13 |
 | `fsct` | FSCT v3 | 10 |
 | `oct` | OpenChain Telco v1.1 | 10 |
 
 ### NTIA profile feature weights
 
+NTIA element 4 ("Other Unique Identifiers") is split into PURL and CPE sub-features, each with equal weight (0.10), reflecting that both are valid NTIA unique identifiers covering different vulnerability databases.
+
 | Feature | Weight | Rationale |
 |---------|--------|-----------|
-| `comp_with_any_vuln_id` | 0.20 | NTIA "other unique identifiers" — highest weight |
-| `comp_with_supplier` | 0.15 | NTIA required element |
-| `comp_with_name` | 0.15 | NTIA required element |
-| `comp_with_version` | 0.15 | NTIA required element |
-| `sbom_dependency_graph` | 0.15 | NTIA "dependency relationships" |
-| `sbom_authors` | 0.10 | NTIA "author of SBOM data" |
-| `sbom_creation_timestamp` | 0.10 | NTIA "timestamp" |
+| `comp_with_supplier` | 0.15 | NTIA required element 1 |
+| `comp_with_name` | 0.15 | NTIA required element 2 |
+| `comp_with_version` | 0.15 | NTIA required element 3 |
+| `comp_with_valid_purl` | 0.10 | NTIA element 4 — PURL half |
+| `comp_with_valid_cpe` | 0.10 | NTIA element 4 — CPE half |
+| `comp_with_dependencies` | 0.15 | NTIA element 5 — dependency relationships |
+| `sbom_authors` | 0.10 | NTIA element 6 — author of SBOM data |
+| `sbom_creation_timestamp` | 0.10 | NTIA element 7 — timestamp |
 
 ### BSI v2.1 profile feature weights
 
@@ -301,18 +307,18 @@ Features absent from the QualityScore or marked `applicable=False` are excluded 
 
 ### FSCT v3 profile feature weights
 
-| Feature | Weight |
-|---------|--------|
-| `comp_with_name` | 0.12 |
-| `comp_with_version` | 0.12 |
-| `comp_with_any_vuln_id` | 0.12 |
-| `comp_has_license` | 0.12 |
-| `comp_with_supplier` | 0.10 |
-| `comp_with_checksums` | 0.10 |
-| `sbom_authors` | 0.08 |
-| `sbom_creation_timestamp` | 0.08 |
-| `sbom_dependency_graph` | 0.08 |
-| `primary_component` | 0.08 |
+| Feature | Weight | Rationale |
+|---------|--------|-----------|
+| `comp_with_name` | 0.12 | FSCT component name |
+| `comp_with_version` | 0.12 | FSCT component version |
+| `comp_with_valid_purl` | 0.12 | FSCT unique identifier (PURL is primary) |
+| `comp_has_license` | 0.12 | FSCT license information |
+| `comp_with_supplier` | 0.10 | FSCT supplier |
+| `comp_with_checksums` | 0.10 | FSCT checksum |
+| `sbom_authors` | 0.08 | FSCT SBOM author |
+| `sbom_creation_timestamp` | 0.08 | FSCT timestamp |
+| `comp_with_dependencies` | 0.08 | FSCT relationship completeness |
+| `primary_component` | 0.08 | FSCT primary component |
 
 ### OpenChain Telco v1.1 profile feature weights
 
@@ -397,6 +403,8 @@ Each record has a score of 0, 5, or 10 (or 12/15 for FSCT tiered checks). The ra
 | `bsi_comp_purl` | SHALL | Every component has a PURL |
 | `bsi_comp_hash` | SHOULD | Every component has a hash |
 | `bsi_dependency_resolution` | SHOULD (→SHALL in v2.0) | At least one dependency edge; node set validated against all known bom-refs and component names |
+| `bsi_comp_download_url` | SHOULD | Every component has a download location (not NOASSERTION/NONE) |
+| `bsi_comp_source_hash` | SHOULD | Components with VCS external references include a hash on that reference — **N/A** if no VCS ref present |
 
 **BSI v1.1 SPDX floor:** The minimum accepted SPDX version is **2.2** (not 2.3). Versions 2.2, 2.2.1, 2.2.2, 2.3, and 3.x all pass.
 
@@ -412,6 +420,7 @@ Each record has a score of 0, 5, or 10 (or 12/15 for FSCT tiered checks). The ra
 | `bsi_signature` | SHOULD | Document signature present |
 | `bsi_comp_filename` | SHALL | Every component has a filename property |
 | `bsi_comp_type_property` | MAY | `bsi:component:executable`, `:archive`, or `:structured` property present |
+| `bsi_comp_concluded_license` | SHOULD | Concluded (effective) license differs from declared — CDX 1.6 only, using `acknowledgement` field — **N/A** for non-CDX-1.6 |
 
 #### BSI v2.1 additions (on top of v2.0)
 
@@ -487,7 +496,7 @@ FSCT uses a **minimum / recommended / aspirational** tier model with raw scores 
 
 | Check key | Tier | Score | Description |
 |-----------|------|-------|-------------|
-| `fsct_sbom_author` | SHALL | 0/10 | Author name declared |
+| `fsct_sbom_author` | SHALL | 0/10/12 | Author name present=10 (minimum); name+contact info (email or URL)=12 (recommended) |
 | `fsct_sbom_timestamp` | SHALL | 0/10 | Creation timestamp present |
 | `fsct_sbom_type` | SHOULD | 0/10/15 | Lifecycle declared: 15 if multiple lifecycles (aspirational), 10 if one, 0 if none |
 | `fsct_sbom_primary` | SHALL | 0/10 | Primary component identified |
@@ -502,7 +511,7 @@ FSCT uses a **minimum / recommended / aspirational** tier model with raw scores 
 | `fsct_comp_supplier` | SHALL | 0/10 | Supplier declared (including "unknown") |
 | `fsct_comp_uniq_id` | SHALL | 0/10 | PURL, CPE, SWHID, SWID, or OmniBOR |
 | `fsct_comp_checksum` | SHALL | 0/10/12 | 0=no checksum, 10=any checksum present, 12=strong checksum (SHA-256+) |
-| `fsct_comp_license` | SHALL | 0/5/10 | 10=valid SPDX ID, 5=license name but not valid SPDX, 0=no license |
+| `fsct_comp_license` | SHALL | 0/10/12/15 | 0=no license; 10=any license name (minimum); 12=valid SPDX ID (recommended); 15=SPDX ID + URL or embedded text (aspirational) |
 | `fsct_comp_copyright` | SHOULD | 0/10 | Copyright text present |
 
 **Checksum tiering:** `fsct_comp_checksum` scores 12.0 when a strong checksum (SHA-256+) is present, 10.0 when any weaker checksum is present, and 0 when no checksum is found. This can push the raw compliance score above 10.0.
@@ -654,7 +663,7 @@ The license database contains a curated subset of the **SPDX 3.23 License List**
 | 8 | Risk escalation at 30% | Arbitrary threshold | Industry guidance (e.g. CVSS Environmental score) may suggest a different model |
 | 9 | Vulnerability name-based lookup | Ecosystem guessing from component_type | Without a PURL, false positives are likely; consider flagging rather than scoring |
 | 10 | CVSS vector strings in OSV | Discarded (returns 0.0) | Should extract the base score from the CVSS vector string |
-| 11 | Schema validation | Lightweight required-fields check only | Full JSON Schema validation against CycloneDX/SPDX published schemas |
+| 11 | Schema validation | Full JSON Schema validation via embedded CycloneDX 1.4/1.5/1.6 and SPDX 2.2/2.3 schemas | Extend to cover SPDX 2.1, CDX 1.3, and SPDX 3.x when official JSON schemas are published |
 | 12 | Creative Commons licenses | Not classified for copyleft risk | CC-BY-SA and CC-BY-NC-SA have share-alike requirements |
 | 13 | SPDX YAML support | Passed through SPDX JSON parser | YAML SPDX is an official format; consider testing against SPDX reference examples |
 | 14 | OCT `files_analyzed` | Explicit declaration required (true or false) | Some tools always omit it; OCT spec may intend `false` as default |

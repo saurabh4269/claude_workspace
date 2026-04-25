@@ -14,6 +14,8 @@ import yaml
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.core.validation.schema_validator import validate_schema
+
 
 class ParseError(Exception):
     """Raised when SBOM content cannot be parsed."""
@@ -41,6 +43,8 @@ class Component:
     bom_ref: Optional[str] = None
     # SPDX-specific: FilesAnalyzed (True by default per spec)
     files_analyzed: Optional[bool] = None
+    # True when any license entry carries a URL or embedded text (enables FSCT tier 15)
+    license_has_url_or_text: bool = False
     raw: dict = field(default_factory=dict)
 
 
@@ -368,9 +372,8 @@ def _parse_cyclonedx_json(data: dict) -> SBOMDocument:
 
     graph = _build_dependency_graph(edges, node_refs, primary_ref, is_complete)
 
-    # Lightweight structural validation: required fields per CycloneDX spec
-    _CDX_JSON_REQUIRED = {"bomFormat", "specVersion"}
-    schema_valid = _CDX_JSON_REQUIRED.issubset(data.keys())
+    # JSON schema validation against embedded official CycloneDX schemas
+    schema_valid = validate_schema(data, "cyclonedx", spec_version or "")
 
     doc = SBOMDocument(
         format="cyclonedx",
@@ -430,6 +433,7 @@ def _parse_cyclonedx_component(raw: dict, spec_version: str = "") -> Optional[Co
     # Licenses (concluded) + declared (CDX 1.6 acknowledgement field)
     licenses: list[str] = []
     declared_licenses: list[str] = []
+    license_has_url_or_text = False
     for lic in raw.get("licenses") or []:
         if isinstance(lic, dict):
             inner = lic.get("license") or lic
@@ -444,6 +448,17 @@ def _parse_cyclonedx_component(raw: dict, spec_version: str = "") -> Optional[Co
                 licenses.append(lic_id)
                 if ack.lower() == "declared":
                     declared_licenses.append(lic_id)
+            # FSCT tier 15: URL or embedded text present
+            if inner.get("url"):
+                license_has_url_or_text = True
+            text_field = inner.get("text")
+            if text_field:
+                text_content = (
+                    text_field.get("content") if isinstance(text_field, dict)
+                    else str(text_field)
+                )
+                if text_content and text_content.strip():
+                    license_has_url_or_text = True
         elif isinstance(lic, str) and lic:
             licenses.append(lic)
 
@@ -496,6 +511,7 @@ def _parse_cyclonedx_component(raw: dict, spec_version: str = "") -> Optional[Co
         copyright=copyright_text,
         download_location=download_location,
         bom_ref=bom_ref,
+        license_has_url_or_text=license_has_url_or_text,
         raw=raw,
     )
 
@@ -651,12 +667,15 @@ def _parse_cyclonedx_xml_component(el: ET.Element, ns_prefix: str) -> Optional[C
 
     licenses: list[str] = []
     declared_licenses: list[str] = []
+    xml_license_has_url_or_text = False
     licenses_el = el.find(f"{ns_prefix}licenses")
     if licenses_el is not None:
         for lic_el in licenses_el:
             lic_id_el = lic_el.find(f"{ns_prefix}id")
             lic_name_el = lic_el.find(f"{ns_prefix}name")
             expr_el = lic_el.find(f"{ns_prefix}expression")
+            url_el = lic_el.find(f"{ns_prefix}url")
+            text_el = lic_el.find(f"{ns_prefix}text")
             ack = lic_el.get("acknowledgement") or ""
             lic_str = (
                 (lic_id_el.text if lic_id_el is not None else None)
@@ -669,6 +688,10 @@ def _parse_cyclonedx_xml_component(el: ET.Element, ns_prefix: str) -> Optional[C
                 licenses.append(lic_str)
                 if ack.lower() == "declared":
                     declared_licenses.append(lic_str)
+            if url_el is not None and (url_el.text or "").strip():
+                xml_license_has_url_or_text = True
+            if text_el is not None and (text_el.text or "").strip():
+                xml_license_has_url_or_text = True
 
     hashes: dict[str, str] = {}
     hashes_el = el.find(f"{ns_prefix}hashes")
@@ -713,6 +736,7 @@ def _parse_cyclonedx_xml_component(el: ET.Element, ns_prefix: str) -> Optional[C
         external_references=ext_refs,
         properties=props,
         bom_ref=bom_ref,
+        license_has_url_or_text=xml_license_has_url_or_text,
         raw={},
     )
 
@@ -787,9 +811,8 @@ def _parse_spdx_json(data: dict) -> SBOMDocument:
     node_refs = list(spdx_id_map.keys())
     graph = _build_dependency_graph(edges, node_refs, primary_ref, False)
 
-    # Lightweight structural validation: required fields per SPDX 2.x JSON spec
-    _SPDX_JSON_REQUIRED = {"spdxVersion", "SPDXID", "name", "dataLicense", "documentNamespace"}
-    schema_valid = _SPDX_JSON_REQUIRED.issubset(data.keys())
+    # JSON schema validation against embedded official SPDX schemas
+    schema_valid = validate_schema(data, "spdx", spec_version or "")
 
     return SBOMDocument(
         format="spdx",
